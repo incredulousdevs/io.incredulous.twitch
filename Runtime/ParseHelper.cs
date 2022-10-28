@@ -1,5 +1,5 @@
-﻿using System.Text.RegularExpressions;
-using System.Net.Sockets;
+﻿using System.Linq;
+using System.Text.RegularExpressions;
 
 namespace Incredulous.Twitch
 {
@@ -11,28 +11,23 @@ namespace Incredulous.Twitch
         {
             int index = source.IndexOf(val);
 
-            for (int i = 0; i < nth; ++i)
+            for (int i = 0; i < nth; i++)
             {
-                if (index == -1)
-                    return -1;
-
+                if (index == -1) return -1;
                 index = source.IndexOf(val, index + 1);
             }
 
             return index;
         }
 
-        private static Regex symbolRegex = new Regex(@"^[a-zA-Z0-9_]+$", RegexOptions.Compiled);
-        public static bool CheckNameRegex(string displayName)
-        {
-            // If unusual characters/symbols are present in user's displayName then use the actual login name instead (login name is always lowercase)
-            // This is useful because most fonts do not support those characters
-            //
-            // Allowed characters are: a-z, A-Z, 0-9, _
+        private static Regex _symbolRegex = new Regex(@"^[a-zA-Z0-9_ ]+$");
 
-            // True = symbols detected
-            return symbolRegex.IsMatch(displayName);
-        }
+        /// <summary>
+        /// Checks whether a display name uses simple characters only (a-z, A-Z, 0-9, _, space)
+        /// </summary>
+        /// <param name="displayName">The display name to check</param>
+        /// <returns>True if the name uses only simple characters, false othewise.</returns>
+        public static bool CheckNameRegex(string displayName) => _symbolRegex.IsMatch(displayName);
 
         public static IRCTags ParseTags(string tagString)
         {
@@ -44,10 +39,10 @@ namespace Incredulous.Twitch
             {
                 string value = split[i].Substring(split[i].IndexOf('=') + 1);
 
-                if (value.Length <= 0) //Ignore empty tags
-                    continue;
+                // Ignore empty tags
+                if (value.Length <= 0) continue;
 
-                //Find the tags needed
+                // Find the tags needed
                 switch (split[i].Substring(0, split[i].IndexOf('=')))
                 {
                     case "badges":
@@ -63,7 +58,7 @@ namespace Incredulous.Twitch
                         continue;
 
                     case "emotes":
-                        tags.emotes.AddRange(ParseTwitchEmotes(value.Split('/')));
+                        tags.emotes = ParseTwitchEmotes(value.Split('/')).OrderBy(t => t.indexes[0].startIndex).ToArray();
                         continue;
 
                     case "room-id": // room-id = channelId
@@ -86,14 +81,7 @@ namespace Incredulous.Twitch
 
         public static string ParseChannel(string ircString)
         {
-            string channel = ircString.Substring(ircString.IndexOf('#') + 1);
-
-            int index = channel.IndexOf(' ');
-            if (index == -1)
-                return channel;
-            else
-                //Further parsing (needed for PRIVMSG for example)
-                return channel.Substring(0, index);
+            return ircString.Substring(ircString.IndexOf('#') + 1).Split(' ')[0];
         }
 
         public static string ParseMessage(string ircString)
@@ -101,44 +89,46 @@ namespace Incredulous.Twitch
             return ircString.Substring(ircString.IndexOfNth(' ', 2) + 2);
         }
 
-        public static ChatterEmote[] ParseTwitchEmotes(string[] splitEmotes)
+        public static ChatterEmote[] ParseTwitchEmotes(string[] emoteStrings)
         {
-            ChatterEmote[] emotes = new ChatterEmote[splitEmotes.Length];
+            var emotes = new ChatterEmote[emoteStrings.Length];
 
-            for (int i = 0; i < splitEmotes.Length; ++i)
+            for (int i = 0; i < emoteStrings.Length; i++)
             {
-                string e = splitEmotes[i];
+                string str = emoteStrings[i];
+                var colonPos = str.IndexOf(':');
 
-                string[] indexes = e.Substring(e.IndexOf(':') + 1).Length > 0 ? e.Substring(e.IndexOf(':') + 1).Split(',') : new string[0];
+                var indexSuperstring = str.Substring(colonPos + 1);
+                var indexStrings = indexSuperstring.Length > 0 ? indexSuperstring.Split(',') : new string[0];
+                var indexes = new ChatterEmote.Index[indexStrings.Length];
 
-                ChatterEmote.Index[] ind = new ChatterEmote.Index[indexes.Length];
-
-                for (int j = 0; j < ind.Length; ++j)
+                for (int j = 0; j < indexes.Length; ++j)
                 {
-                    ind[j].startIndex = int.Parse(indexes[j].Substring(0, indexes[j].IndexOf('-')));
-                    ind[j].endIndex = int.Parse(indexes[j].Substring(indexes[j].IndexOf('-') + 1));
+                    var hyphenPos = indexStrings[j].IndexOf('-');
+                    indexes[j].startIndex = int.Parse(indexStrings[j].Substring(0, hyphenPos));
+                    indexes[j].endIndex = int.Parse(indexStrings[j].Substring(hyphenPos + 1));
                 }
 
                 emotes[i] = new ChatterEmote()
                 {
-                    id = e.Substring(0, e.IndexOf(':')),
-                    indexes = ind
+                    id = str.Substring(0, colonPos),
+                    indexes = indexes
                 };
             }
 
             return emotes;
         }
 
-        public static ChatterBadge[] ParseBadges(string[] splitBadges)
+        public static ChatterBadge[] ParseBadges(string[] badgeStrings)
         {
-            ChatterBadge[] badges = new ChatterBadge[splitBadges.Length];
+            var badges = new ChatterBadge[badgeStrings.Length];
 
-            for (int i = 0; i < splitBadges.Length; ++i)
+            for (int i = 0; i < badgeStrings.Length; i++)
             {
-                string s = splitBadges[i];
-
-                badges[i].id = s.Substring(0, s.IndexOf('/'));
-                badges[i].version = s.Substring(s.IndexOf('/') + 1);
+                var str = badgeStrings[i];
+                var divider = str.IndexOf('/');
+                badges[i].id = str.Substring(0, divider);
+                badges[i].version = str.Substring(divider + 1);
             }
 
             return badges;

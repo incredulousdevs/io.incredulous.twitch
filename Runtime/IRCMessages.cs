@@ -9,7 +9,8 @@ namespace Incredulous.Twitch
         [System.Serializable]
         public struct Index
         {
-            public int startIndex, endIndex;
+            public int startIndex;
+            public int endIndex;
         }
 
         public string id;
@@ -32,7 +33,7 @@ namespace Incredulous.Twitch
         public string userId = string.Empty;
 
         public ChatterBadge[] badges = new ChatterBadge[0];
-        public List<ChatterEmote> emotes = new List<ChatterEmote>();
+        public ChatterEmote[] emotes = new ChatterEmote[0];
 
         /// <summary>
         /// Returns whether the tags contain a given emote.
@@ -41,10 +42,8 @@ namespace Incredulous.Twitch
         {
             foreach (ChatterEmote e in emotes)
             {
-                if (e.id == emote)
-                    return true;
+                if (e.id == emote) return true;
             }
-
             return false;
         }
 
@@ -55,10 +54,8 @@ namespace Incredulous.Twitch
         {
             foreach (ChatterBadge b in badges)
             {
-                if (b.id == badge)
-                    return true;
+                if (b.id == badge) return true;
             }
-
             return false;
         }
     }

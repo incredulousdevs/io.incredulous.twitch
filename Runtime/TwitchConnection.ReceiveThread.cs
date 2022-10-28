@@ -1,63 +1,66 @@
+﻿using System;
+using System.IO;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Net.Sockets;
 using UnityEngine;
 
 namespace Incredulous.Twitch
 {
 
-    internal partial class TwitchConnection
+    public partial class TwitchConnection
     {
-        private byte[] inputBuffer;
-        private char[] chars;
-        private StringBuilder currentString = new StringBuilder();
-        private Decoder decoder = Encoding.UTF8.GetDecoder();
+        const int READ_BUFFER_SIZE = 256;
+        const int READ_INTERVAL = 100;
 
         /// <summary>
         /// The IRC input process which will run on the receive thread.
         /// </summary>
-        private void ReceiveProcess()
+        private async Task ReceiveProcess(CancellationToken cancellationToken)
         {
-            // get the Socket from the TcpClient
-            Socket socket = tcpClient.Client;
-            currentString.Clear();
-            inputBuffer = new byte[readBufferSize];
-            chars = new char[readBufferSize];
+            var stream = _tcpClient.GetStream();
+            var currentString = new StringBuilder();
+            var inputBuffer = new byte[READ_BUFFER_SIZE];
+            var chars = new char[READ_BUFFER_SIZE];
+            var decoder = Encoding.UTF8.GetDecoder();
 
-            while (continueThreads)
+            try
             {
-                // check if the socket is still connected
-                if (!CheckSocketConnection(socket))
+                while (!cancellationToken.IsCancellationRequested)
                 {
-                    // Sometimes, right after a new TcpClient is created, the socket says
-                    // it has been shutdown. This catches that case and reconnects.
-                    isConnected = false;
-                    alertQueue.Enqueue(ConnectionAlert.ConnectionInterrupted);
-                    break;
-                }
+                    /*
+                    // check if the socket is still connected
+                    if (!CheckSocketConnection(tcpClient.Client))
+                    {
+                        // Sometimes, right after a new TcpClient is created, the socket says
+                        // it has been shutdown. This catches that case and reconnects.
+                        isConnected = false;
+                        alertQueue.Enqueue(ConnectionAlert.ConnectionInterrupted);
+                        break;
+                    }
+                    */
 
-                // check if new data is available
-                while (socket.Available > 0)
-                {
-                    // receive the data
-                    var bytesReceived = socket.Receive(inputBuffer);
+                    if (!stream.DataAvailable)
+                    {
+                        await Task.Delay(READ_INTERVAL);
+                        continue;
+                    }
 
-                    // decode the data into text
+                    // Receive and decode the data
+                    Debug.Log("Beginning read...");
+                    var bytesReceived = await stream.ReadAsync(inputBuffer, 0, READ_BUFFER_SIZE, cancellationToken);
                     var charCount = decoder.GetChars(inputBuffer, 0, bytesReceived, chars, 0);
+                    Debug.Log("Read data!");
 
                     // iterate through the received characters
                     for (var i = 0; i < charCount; i++)
                     {
-                        // if the character is a linebreak...
                         if (chars[i] == '\n' || chars[i] == '\r')
                         {
-                            // handle a string, if there is one
-                            if (currentString.Length > 0)
-                            {
-                                HandleLine(currentString.ToString());
-                                currentString.Clear();
-                            }
-                            continue;
+                            // if the character is a linebreak, handle the line
+                            if (currentString.Length > 0) HandleLine(currentString.ToString());
+                            currentString.Clear();
                         }
                         else
                         {
@@ -66,13 +69,13 @@ namespace Incredulous.Twitch
                         }
                     }
                 }
-
-                // sleep for a short period
-                Thread.Sleep(readInterval);
             }
-
-            if (debugThreads)
-                Debug.LogWarning("Exited receive thread.");
+            catch (OperationCanceledException) { }
+            catch (IOException ex)
+            {
+                Debug.LogError("Error while reading NetworkStream.");
+                Debug.LogException(ex);
+            }
         }
 
         /// <summary>
@@ -80,8 +83,21 @@ namespace Incredulous.Twitch
         /// </summary>
         private void HandleLine(string raw)
         {
-            if (debugIRC)
-                Debug.Log("<color=#005ae0><b>[IRC INPUT]</b></color> " + raw);
+            if (LogIrcMessages) Debug.Log("<color=#005ae0><b>[IRC INPUT]</b></color> " + raw);
+
+            // Respond to PING messages
+            if (raw.StartsWith("PING"))
+            {
+                SendCommand("PONG :tmi.twitch.tv");
+                return;
+            }
+
+            // Notify when PONG messages are received.
+            if (raw.StartsWith(":tmi.twitch.tv PONG"))
+            {
+                ConnectionAlertEvent?.Invoke(ConnectionAlert.Pong);
+                return;
+            }
 
             string ircString = raw;
             string tagString = string.Empty;
@@ -116,14 +132,6 @@ namespace Incredulous.Twitch
                         break;
                 }
             }
-
-            // Respond to PING messages
-            if (raw.StartsWith("PING"))
-                SendCommand("PONG :tmi.twitch.tv");
-
-            // Notify when PONG messages are received.
-            if (raw.StartsWith(":tmi.twitch.tv PONG"))
-                alertQueue.Enqueue(ConnectionAlert.Pong);
         }
 
         /// <summary>
@@ -134,7 +142,7 @@ namespace Incredulous.Twitch
             if (ircString.Contains(":Login authentication failed"))
             {
                 isConnected = false;
-                alertQueue.Enqueue(ConnectionAlert.BadLogin);
+                ConnectionAlertEvent?.Invoke(ConnectionAlert.BadLogin);
             }
         }
 
@@ -146,12 +154,12 @@ namespace Incredulous.Twitch
             switch (type)
             {
                 case "001":
-                    alertQueue.Enqueue(ConnectionAlert.ConnectedToServer);
-                    SendCommand("JOIN #" + twitchCredentials.channel.ToLower(), true);
+                    ConnectionAlertEvent?.Invoke(ConnectionAlert.ConnectedToServer);
+                    SendCommand("JOIN #" + Channel.ToLower(), true);
                     break;
                 case "353":
                     isConnected = true;
-                    alertQueue.Enqueue(ConnectionAlert.JoinedChannel);
+                    ConnectionAlertEvent?.Invoke(ConnectionAlert.JoinedChannel);
                     break;
             }
         }
@@ -167,12 +175,8 @@ namespace Incredulous.Twitch
             var message = ParseHelper.ParseMessage(ircString);
             var tags = ParseHelper.ParseTags(tagString);
 
-            // Sort emotes to match emote order with the chat message (compares emote indexes)
-            if (tags.emotes.Count > 0)
-                tags.emotes.Sort((a, b) => 1 * a.indexes[0].startIndex.CompareTo(b.indexes[0].startIndex));
-
             // Queue chatter object
-            chatterQueue.Enqueue(new Chatter(login, channel, message, tags));
+            ChatMessageEvent?.Invoke(new Chatter(login, channel, message, tags));
         }
 
         /// <summary>
@@ -182,7 +186,7 @@ namespace Incredulous.Twitch
         {
             // Update the client user tags
             var tags = ParseHelper.ParseTags(tagString);
-            clientUserTags = tags;
+            ClientUserTags = tags;
             UpdateRateLimits(tags);
         }
 

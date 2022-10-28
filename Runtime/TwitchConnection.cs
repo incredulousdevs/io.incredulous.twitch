@@ -3,54 +3,63 @@ using System.Collections;
 using System.Collections.Concurrent;
 using System.Net.Sockets;
 using System.Threading;
+using System.Threading.Tasks;
+using UnityEngine;
 
 namespace Incredulous.Twitch
 {
 
-    internal partial class TwitchConnection
+    public partial class TwitchConnection
     {
-        public TwitchConnection(TwitchIRC twitchIRC)
+        public TwitchConnection(string ircAddress, int port, TwitchCredentials twitchCredentials)
         {
-            try
-            {
-                tcpClient = new TcpClient(twitchIRC.ircAddress, twitchIRC.port);
-            }
-            catch (Exception)
-            {
-                tcpClient = null;
-            }
+            _ircAddress = ircAddress;
+            _ircPort = port;
 
-            twitchCredentials = twitchIRC.twitchCredentials;
-            clientUserTags = twitchIRC.clientUserTags;
+            Username = twitchCredentials.username;
+            Token = twitchCredentials.oauth;
+            Channel = twitchCredentials.channel;
 
-            readBufferSize = twitchIRC.readBufferSize;
-            readInterval = twitchIRC.readInterval;
-            writeInterval = twitchIRC.writeInterval;
+            //clientUserTags = twitchIRC.clientUserTags;
 
-            alertQueue = twitchIRC.alertQueue;
-            chatterQueue = twitchIRC.chatterQueue;
+            _chatRateLimit = twitchCredentials.username == twitchCredentials.channel ? RateLimit.ChatModerator : RateLimit.ChatRegular;
+            _outputTimestamps = new ConcurrentQueue<DateTime>();
 
-            chatRateLimit = twitchCredentials.username == twitchCredentials.channel ? RateLimit.ChatModerator : RateLimit.ChatRegular;
-            outputTimestamps = twitchIRC.outputTimestamps;
-
-            debugIRC = twitchIRC.debugIRC;
-            debugThreads = twitchIRC.debugThreads;
+            LogIrcMessages = true;
         }
 
-        /// <summary>
-        /// The TCP Client instance for this connection.
-        /// </summary>
-        public TcpClient tcpClient { get; private set; }
+        private TcpClient _tcpClient;
+        private string _ircAddress;
+        private int _ircPort;
+
+        private IRCTags _clientUserTags;
+        private int _isConnected;
+
+        public string Username { get; }
+        public string Token { get; }
+        public string Channel { get; }
+
+        //private readonly ConcurrentQueue<ConnectionAlert> _alertQueue = new ConcurrentQueue<ConnectionAlert>();
+        //private readonly ConcurrentQueue<Chatter> _chatterQueue = new ConcurrentQueue<Chatter>();
+        private readonly ConcurrentQueue<DateTime> _outputTimestamps = new ConcurrentQueue<DateTime>();
+
+        private bool _maintainConnection;
+        private Task _connectionTask;
+        private CancellationTokenSource _cancellationTokenSource;
+
+        private object _rateLimitLock = new object();
+        private RateLimit _chatRateLimit;
+
+        public bool LogIrcMessages;
 
         /// <summary>
         /// The client user's Twitch tags.
         /// </summary>
-        public IRCTags clientUserTags
+        public IRCTags ClientUserTags
         {
             get => _clientUserTags;
             private set => Interlocked.Exchange(ref _clientUserTags, value);
         }
-        private IRCTags _clientUserTags;
 
         /// <summary>
         /// Whether this instance is currently connected to Twitch.
@@ -60,100 +69,61 @@ namespace Incredulous.Twitch
             get => _isConnected == 1;
             private set => Interlocked.Exchange(ref _isConnected, value ? 1 : 0);
         }
-        private int _isConnected;
 
         /// <summary>
-        /// Whether this connection has received a disconnect request.
+        /// A delegate which handles a new chat message from the server.
         /// </summary>
-        public bool pendingDisconnect;
-
-        private readonly TwitchCredentials twitchCredentials;
-        private readonly int readBufferSize;
-        private readonly int readInterval;
-        private readonly int writeInterval;
-        private readonly bool debugIRC;
-        private readonly bool debugThreads;
+        public delegate void ChatMessageEventHandler(Chatter chatter);
 
         /// <summary>
-        /// A reference to the TwitchIRC manager's alert queue.
+        /// A delegate which handles a status update from the Twitch IRC client.
         /// </summary>
-        private readonly ConcurrentQueue<ConnectionAlert> alertQueue;
+        public delegate void ConnectionAlertEventHandler(ConnectionAlert connectionAlert);
 
         /// <summary>
-        /// A reference to the TwitchIRC manager's chat message queue.
+        /// An event which is triggered when a new chat message is received.
         /// </summary>
-        private readonly ConcurrentQueue<Chatter> chatterQueue;
+        public event ChatMessageEventHandler ChatMessageEvent;
 
         /// <summary>
-        /// A reference to the TwitchIRC manager's output timestamp queue (for rate limiting).
+        /// An event which is triggered when the connection status changes.
         /// </summary>
-        private readonly ConcurrentQueue<DateTime> outputTimestamps;
-
-        private Thread sendThread;
-        private Thread receiveThread;
-
-        private bool continueThreads
-        {
-            get => _continueThreads == 1;
-            set => Interlocked.Exchange(ref _continueThreads, value ? 1 : 0);
-        }
-        private int _continueThreads = 1;
-
-        private RateLimit chatRateLimit;
-        private object rateLimitLock = new object();
+        public event ConnectionAlertEventHandler ConnectionAlertEvent;
 
         /// <summary>
         /// Initalizes a connection to Twitch and starts the send, receive, and check connection threads.
         /// </summary>
         public void Begin()
         {
-            receiveThread = new Thread(() => ReceiveProcess());
-            sendThread = new Thread(() => SendProcess());
-
-            receiveThread.Start();
-            sendThread.Start();
-
-            // Queue login commands
-            SendCommand("PASS oauth:" + twitchCredentials.oauth.ToLower(), true);
-            SendCommand("NICK " + twitchCredentials.username.ToLower(), true);
-            SendCommand("CAP REQ :twitch.tv/tags twitch.tv/commands", true);
+            if (_maintainConnection) return;
+            _maintainConnection = true;
+            _connectionTask = MaintainConnection();
         }
 
         /// <summary>
         /// A coroutine which closes the connection and threads without blocking the main thread.
         /// </summary>
-        public IEnumerator End()
+        public async Task End()
         {
-            if (tcpClient == null || pendingDisconnect)
-                yield break;
-
-            pendingDisconnect = true;
+            if (!_maintainConnection) return;
+            _maintainConnection = false;
+            _cancellationTokenSource.Cancel();
+            await _connectionTask;
 
             isConnected = false;
-            continueThreads = false;
-
-            while (receiveThread.IsAlive)
-                yield return null;
-            while (sendThread.IsAlive)
-                yield return null;
-
-            tcpClient.Close();
         }
 
         /// <summary>
-        /// Terminates the connection to Twitch and blocks the main thread while the send, receive, and check connection threads end.
+        /// A coroutine which closes the connection and threads without blocking the main thread.
         /// </summary>
         public void BlockingEndAndClose()
         {
-            if (tcpClient == null)
-                return;
+            if (!_maintainConnection) return;
+            _maintainConnection = false;
+            _cancellationTokenSource.Cancel();
+            _connectionTask.Wait();
 
-            pendingDisconnect = true;
             isConnected = false;
-            continueThreads = false;
-            receiveThread?.Join();
-            sendThread?.Join();
-            tcpClient.Close();
         }
 
         /// <summary>
@@ -163,13 +133,58 @@ namespace Incredulous.Twitch
         {
             if (tags.HasBadge("broadcaster") || tags.HasBadge("moderator"))
             {
-                lock (rateLimitLock)
-                    chatRateLimit = RateLimit.ChatModerator;
+                lock (_rateLimitLock) _chatRateLimit = RateLimit.ChatModerator;
             }
             else
             {
-                lock (rateLimitLock)
-                    chatRateLimit = RateLimit.ChatRegular;
+                lock (_rateLimitLock) _chatRateLimit = RateLimit.ChatRegular;
+            }
+        }
+
+        private async Task MaintainConnection()
+        {
+            while (_maintainConnection)
+            {
+                // Initialize the connection
+                _tcpClient = new TcpClient();
+                Debug.Log("Connecting...");
+                await _tcpClient.ConnectAsync(_ircAddress, _ircPort);
+
+                // Begin send and receive processes
+                Debug.Log("Starting send/receive routines...");
+                _cancellationTokenSource = new CancellationTokenSource();
+                var receiveTask = ReceiveProcess(_cancellationTokenSource.Token);
+                var sendTask = SendProcess(_cancellationTokenSource.Token);
+
+                // Queue login commands
+                Debug.Log("Sending initial commands...");
+                SendCommand("PASS oauth:" + Token.ToLower(), true);
+                SendCommand("NICK " + Username.ToLower(), true);
+                SendCommand("CAP REQ :twitch.tv/tags twitch.tv/commands", true);
+
+                // Wait for any of the tasks to complete
+                var task = await Task.WhenAny(receiveTask, sendTask);
+                if (task.IsFaulted) Debug.LogException(task.Exception);
+                _cancellationTokenSource.Cancel();
+
+                // Await each process separately
+                try
+                {
+                    await receiveTask;
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogException(ex);
+                }
+
+                try
+                {
+                    await sendTask;
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogException(ex);
+                }
             }
         }
     }

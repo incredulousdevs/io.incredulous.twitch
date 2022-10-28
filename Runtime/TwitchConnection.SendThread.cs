@@ -1,13 +1,14 @@
-using System;
-using System.Collections.Generic;
+﻿using System;
+using System.IO;
 using System.Collections.Concurrent;
 using System.Threading;
+using System.Threading.Tasks;
 using UnityEngine;
 
 namespace Incredulous.Twitch
 {
 
-    internal partial class TwitchConnection
+    public partial class TwitchConnection
     {
         private ConcurrentQueue<string> priorityOutputQueue = new ConcurrentQueue<string>();
         private ConcurrentQueue<string> outputQueue = new ConcurrentQueue<string>();
@@ -15,43 +16,51 @@ namespace Incredulous.Twitch
         /// <summary>
         /// The IRC output process which will run on the send thread.
         /// </summary>
-        private void SendProcess()
+        private async Task SendProcess(CancellationToken cancellationToken)
         {
-            var stream = tcpClient.GetStream();
+            var stream = _tcpClient.GetStream();
             RateLimit rateLimit;
 
-            //Read loop
-            while (continueThreads)
+            try
             {
-                // Send prioritized outputs
-                while (priorityOutputQueue.TryDequeue(out var priorityOutput))
-                    stream.WriteLine(priorityOutput, debugIRC);
-
-                // Get the current rate limit
-                lock (rateLimitLock)
-                    rateLimit = chatRateLimit;
-
-                // Clear timestamps that are older than the rate limit period
-                var minTime = DateTime.Now - rateLimit.timeSpan;
-                while (outputTimestamps.TryPeek(out var next) && next < minTime)
-                    outputTimestamps.TryDequeue(out _);
-
-                // Send outputs up to the rate limit
-                while (!outputQueue.IsEmpty && outputTimestamps.Count < rateLimit.count)
+                while (!cancellationToken.IsCancellationRequested)
                 {
-                    if (outputQueue.TryDequeue(out var output))
+                    // Send prioritized outputs
+                    while (priorityOutputQueue.TryDequeue(out var priorityOutput))
                     {
-                        stream.WriteLine(output, debugIRC);
-                        outputTimestamps.Enqueue(DateTime.Now);
+                        if (LogIrcMessages) ConnectionAlertEvent?.Invoke(new ConnectionAlert(0, "<color=#c91b00><b>[IRC OUTPUT]</b></color> Sending command: " + priorityOutput));
+                        stream.WriteLine(priorityOutput);
+                    }
+
+                    // If there are no queued messages, wait before checking again
+                    if (outputQueue.Count == 0)
+                    {
+                        await Task.Delay(100);
+                        continue;
+                    }
+
+                    // Update the rate limit
+                    lock (_rateLimitLock) rateLimit = _chatRateLimit;
+
+                    // Clear timestamps that are older than the rate limit period
+                    var minTime = DateTime.Now - rateLimit.timeSpan;
+                    while (_outputTimestamps.TryPeek(out var next) && next < minTime) _outputTimestamps.TryDequeue(out _);
+
+                    // Send outputs up to the rate limit
+                    while (_outputTimestamps.Count < rateLimit.count && outputQueue.TryDequeue(out var output))
+                    {
+                        if (LogIrcMessages) ConnectionAlertEvent?.Invoke(new ConnectionAlert(0, "<color=#c91b00><b>[IRC OUTPUT]</b></color> Sending command: " + output));
+                        //if (debugIRC) Debug.Log("<color=#c91b00><b>[IRC OUTPUT]</b></color> Sending command: " + output);
+                        stream.WriteLine(output);
+                        _outputTimestamps.Enqueue(DateTime.Now);
                     }
                 }
-
-                // Sleep for a short while before checking again
-                Thread.Sleep(writeInterval);
             }
-
-            if (debugThreads)
-                Debug.LogWarning("Exited send thread.");
+            catch (IOException ex)
+            {
+                Debug.LogError("Error while writing to NetworkStream.");
+                Debug.LogException(ex);
+            }
         }
 
         /// <summary>
@@ -67,18 +76,16 @@ namespace Incredulous.Twitch
             // For non-prioritized outputs, send a warning if the output will surpass the rate limit
             if (!prioritized)
             {
-                lock (rateLimitLock)
+                lock (_rateLimitLock)
                 {
-                    if (outputTimestamps.Count + 1 > chatRateLimit.count)
-                        alertQueue.Enqueue(ConnectionAlert.RateLimitWarning);
+                    if (_outputTimestamps.Count + 1 > _chatRateLimit.count)
+                        ConnectionAlertEvent?.Invoke(ConnectionAlert.RateLimitWarning);
                 }
             }
 
             // Place command in respective queue
-            if (prioritized)
-                priorityOutputQueue.Enqueue(command);
-            else
-                outputQueue.Enqueue(command);
+            var queue = prioritized ? priorityOutputQueue : outputQueue;
+            queue.Enqueue(command);
         }
 
         /// <summary>
@@ -87,18 +94,17 @@ namespace Incredulous.Twitch
         public void SendChatMessage(string message)
         {
             // Message can't be empty
-            if (message.Length <= 0)
-                return;
+            if (message.Length <= 0) return;
 
             // Send a warning if the output will surpass the rate limit
-            lock (rateLimitLock)
+            lock (_rateLimitLock)
             {
-                if (outputTimestamps.Count + 1 > chatRateLimit.count)
-                    alertQueue.Enqueue(ConnectionAlert.RateLimitWarning);
+                if (_outputTimestamps.Count >= _chatRateLimit.count)
+                    ConnectionAlertEvent?.Invoke(ConnectionAlert.RateLimitWarning);
             }
 
             // Place message in queue
-            outputQueue.Enqueue("PRIVMSG #" + twitchCredentials.channel + " :" + message);
+            outputQueue.Enqueue("PRIVMSG #" + Channel.ToLower() + " :" + message);
         }
     }
 

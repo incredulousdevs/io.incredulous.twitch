@@ -130,13 +130,13 @@ namespace Incredulous.Twitch
 
         private void OnDisable()
         {
-            BlockingDisconnect(connection);
+            _ = connection?.End();
         }
 
         private void OnDestroy()
         {
             if (singleton && Instance == this) Instance = null;
-            BlockingDisconnect(connection);
+            _ = connection?.End();
         }
 
         #endregion
@@ -218,9 +218,10 @@ namespace Incredulous.Twitch
                 twitchCredentials.oauth = twitchCredentials.oauth.Substring(6);
 
             // Create a new connection to Twitch IRC
-            connection = new TwitchConnection(this);
+            connection = new TwitchConnection(ircAddress, port, twitchCredentials);
 
             // Check the connection
+            /*
             if (connection.tcpClient == null || !connection.tcpClient.Connected)
             {
                 alertQueue.Enqueue(ConnectionAlert.NoConnection);
@@ -230,6 +231,7 @@ namespace Incredulous.Twitch
             // Wait for an interval if there has been more than one failed connection attempt
             if (failCount >= 2)
                 yield return new WaitForSecondsRealtime(1 << (failCount - 2));
+            */
 
             // Begin the threads and attempt to authenticate
             connection.Begin();
@@ -240,14 +242,14 @@ namespace Incredulous.Twitch
         /// </summary>
         private IEnumerator DisconnectCoroutine(TwitchConnection connection)
         {
-            if (connection == null || connection.pendingDisconnect)
-                yield break;
+            if (connection == null) yield break;
 
             // Finish processing any pending information
             HandlePendingInformation();
 
             // Close the connection
-            yield return StartCoroutine(connection.End());
+            var endTask = connection.End();
+            while (!endTask.IsCompleted) yield return null;
 
             // Reset connection variable
             if (this.connection == connection)
@@ -256,6 +258,7 @@ namespace Incredulous.Twitch
             Debug.LogWarning("Disconnected from Twitch IRC");
         }
 
+        /*
         /// <summary>
         /// Disconnect from Twitch IRC. <b>Blocks the main thread. Use carefully.</b>
         /// </summary>
@@ -276,6 +279,7 @@ namespace Incredulous.Twitch
 
             Debug.LogWarning("Disconnected from Twitch IRC");
         }
+        */
 
         /// <summary>
         /// Handles pending information received from the current connection
@@ -294,8 +298,8 @@ namespace Incredulous.Twitch
                     HandleConnectionAlert(alert);
             }
 
-            if (connection != null && clientUserTags != connection.clientUserTags)
-                clientUserTags = connection.clientUserTags;
+            if (connection != null && clientUserTags != connection.ClientUserTags)
+                clientUserTags = connection.ClientUserTags;
         }
 
         /// <summary>
