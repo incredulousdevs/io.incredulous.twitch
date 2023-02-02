@@ -27,9 +27,14 @@ namespace Incredulous.Twitch
                 Token = credentials.Token.StartsWith("oauth:") ? credentials.Token.Substring(6) : credentials.Token
             };
 
-            RateLimit = Credentials.Username == Credentials.Channel ? RateLimit.ChatModerator : RateLimit.ChatRegular;
-
-            LogIrcMessages = true;
+            if (Credentials.IsVerified)
+            {
+                RateLimit = RateLimit.SiteLimitVerified;
+            }
+            else
+            {
+                RateLimit = Credentials.Username == Credentials.Channel ? RateLimit.ChatModerator : RateLimit.ChatRegular;
+            }
         }
 
         private bool _maintainConnection;

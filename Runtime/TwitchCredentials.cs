@@ -14,5 +14,8 @@ namespace Incredulous.Twitch
 
         [Tooltip("The OAuth token which will be used to authenticate with Twitch. Generate a token at https://twitchapps.com/tmi/.")]
         public string Token;
+
+        [Tooltip("Whether the client should use verified-status rate limits. NOTE: Do not set this to true if you have not been granted verified status by Twitch. Your account risks being locked or banned.")]
+        public bool IsVerified;
     }
 }

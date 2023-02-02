@@ -1,8 +1,8 @@
 ﻿using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.Collections.Concurrent;
 using UnityEngine;
+using UnityEngine.Events;
 
 namespace Incredulous.Twitch
 {
@@ -11,295 +11,147 @@ namespace Incredulous.Twitch
     /// </summary>
     public partial class TwitchIRC : MonoBehaviour
     {
-        [Header("Server Information")]
+        [field: Tooltip("The information used to authenticate with Twitch.")]
+        [field: SerializeField] public TwitchCredentials Credentials { get; private set; }
 
-        [Tooltip("The IRC Address of the server: irc.chat.twitch.tv")]
-        public string ircAddress = "irc.chat.twitch.tv";
+        [field: Tooltip("Whether a connection to Twitch should be established on Start.")]
+        [field: SerializeField] public bool ConnectOnStart { get; set; } = true;
 
-        [Tooltip("The server port which the client should connect to: 6667")]
-        public int port = 6667;
+        [field: Tooltip("Whether all IRC messages should be logged to the debug console.")]
+        [field: SerializeField] public bool DebugIrc { get; set; }
 
-        [Tooltip("The information used to authenticate with Twitch.")]
-        public TwitchCredentials twitchCredentials;
+        [field: Space]
+        [field: Tooltip("An event which is triggered when a new chat message is received.")]
+        [field: SerializeField] public ChatMessageUnityEvent ChatMessageEvent { get; private set; } = new ChatMessageUnityEvent();
 
-        [Tooltip("Whether the client should use verified-status rate limits. NOTE: Do not set this to true if you have not been granted verified status by Twitch. Your account risks being locked or banned.")]
-        public bool verifiedBotStatus;
+        [field: Tooltip("An event which is triggered when the connection status changes.")]
+        [field: SerializeField] public ConnectionAlertUnityEvent ConnectionAlertEvent { get; private set; } = new ConnectionAlertUnityEvent();
 
-        [Header("Read Information")]
-
-        [Tooltip("The number of milliseconds between each time the input thread checks for new inputs.")]
-        public int readInterval = 100;
-
-        [Tooltip("The capacity of the read buffer. Smaller values consume less memory but require more cycles to retrieve data.")]
-        public int readBufferSize = 128;
-
-
-        [Header("Write Information")]
-
-        [Tooltip("The number of milliseconds between each time the output thread checks its queues.")]
-        public int writeInterval = 100;
-
-
-        [Header("Other Settings")]
-
-        [Tooltip("When true, duplicate instances of TwitchIRC will be destroyed. The first instance will be set to DontDestroyOnLoad.")]
-        [SerializeField] private bool singleton;
-
-        [Tooltip("Whether a connection to Twitch should be established on Start.")]
-        public bool connectOnStart = true;
-
-        [Tooltip("Whether all IRC messages should be logged to the debug console.")]
-        public bool debugIRC = false;
-
-        [Tooltip("Whether thread warning messages should be logged to the debug console.")]
-        public bool debugThreads = false;
+        /// <summary>
+        /// The underlying Twitch client.
+        /// </summary>
+        public TwitchClient Client { get; private set; }
 
         /// <summary>
         /// The client user's Twitch tags.
         /// </summary>
-        public Tags clientUserTags { get; private set; }
+        public Tags ClientUserTags => Client?.ClientUserTags;
 
         /// <summary>
         /// Whether the Twitch client is successfully connected to Twitch.
         /// </summary>
-        public bool IsConnected => connection.ConnectionStatus == TwitchClient.Status.Connected;
-
-        /// <summary>
-        /// The first created instance of TwitchIRC, if it exists.
-        /// </summary>
-        public static TwitchIRC Instance { get; private set; }
+        public bool IsConnected => Client?.ConnectionStatus == TwitchClient.Status.Connected;
 
         /// <summary>
         /// A queue for connection alerts.
         /// </summary>
-        internal readonly ConcurrentQueue<ConnectionAlert> alertQueue = new ConcurrentQueue<ConnectionAlert>();
+        private readonly Queue<ConnectionAlert> _alertQueue = new Queue<ConnectionAlert>();
 
         /// <summary>
         /// A queue for incoming chat messages.
         /// </summary>
-        internal readonly ConcurrentQueue<Chatter> chatterQueue = new ConcurrentQueue<Chatter>();
+        private readonly Queue<Chatter> _chatterQueue = new Queue<Chatter>();
 
         /// <summary>
-        /// A queue which holds timestamps for all outputs sent to the server (for rate limiting).
+        /// Whether the controller has been instructed to maintain a connection.
         /// </summary>
-        internal readonly ConcurrentQueue<DateTime> outputTimestamps = new ConcurrentQueue<DateTime>();
+        private bool _shouldConnect;
 
-
-        /// <summary>
-        /// The current Twitch connection.
-        /// </summary>
-        private TwitchClient connection;
-
-        /// <summary>
-        /// The number of times a connection attempt has sequentially failed.
-        /// </summary>
-        private int failCount;
-
-
-        #region Unity MonoBehaviour Messages
-
-        private void Awake()
-        {
-            if (Instance)
-            {
-                if (singleton)
-                {
-                    gameObject.SetActive(false);
-                    Destroy(gameObject);
-                }
-            }
-            else
-            {
-                Instance = this;
-
-                if (singleton)
-                    DontDestroyOnLoad(gameObject);
-            }
-        }
-
-        private void Start()
-        {
-            if (connectOnStart)
-                Connect();
-        }
-
-        private void Update()
-        {
-            HandlePendingInformation();
-        }
-
-        private void OnDisable()
-        {
-            connection?.End();
-        }
-
-        private void OnDestroy()
-        {
-            if (singleton && Instance == this) Instance = null;
-            connection?.End();
-        }
-
-        #endregion
-
-        #region Events
-
-        /// <summary>
-        /// A delegate which handles a new chat message from the server.
-        /// </summary>
-        public delegate void ChatMessageEventHandler(Chatter chatter);
-
-        /// <summary>
-        /// A delegate which handles a status update from the Twitch IRC client.
-        /// </summary>
-        public delegate void ConnectionAlertEventHandler(ConnectionAlert connectionAlert);
-
-        /// <summary>
-        /// An event which is triggered when a new chat message is received.
-        /// </summary>
-        public event ChatMessageEventHandler ChatMessageEvent;
-
-        /// <summary>
-        /// An event which is triggered when the connection status changes.
-        /// </summary>
-        public event ConnectionAlertEventHandler ConnectionAlertEvent;
-
-        #endregion
+        private bool _debugIrc;
 
         /// <summary>
         /// Connect or reconnect to Twitch IRC.
         /// </summary>
-        [ContextMenu("Connect IRC")]
+        [ContextMenu("Connect")]
         public void Connect()
         {
-            StartCoroutine(ConnectCoroutine());
+            _shouldConnect = true;
+
+            // Start the connection
+            Client.Begin();
         }
 
         /// <summary>
         /// Disconnect from Twitch IRC.
         /// </summary>
-        [ContextMenu("Disconnect IRC")]
+        [ContextMenu("Disconnect")]
         public void Disconnect()
         {
-            StartCoroutine(DisconnectCoroutine(connection));
+            _shouldConnect = false;
+
+            // Finish processing any pending information
+            HandlePendingInformation();
+            
+            // End the connection
+            Client.End();
         }
 
         /// <summary>
         /// Sends a chat message.
         /// </summary>
         /// <param name="message"></param>
-        public void SendChatMessage(string message) => connection?.SendChatMessage(message);
+        public void SendChatMessage(string message) => Client?.SendChatMessage(message);
 
         /// <summary>
         /// Queues a command to be sent to the IRC server. Prioritzed commands will be sent without regard for rate limits.
         /// </summary>
-        public void SendCommand(string command) => connection?.SendCommand(command);
+        public void SendCommand(string command) => Client?.SendCommand(command);
 
         /// <summary>
         /// Sends a PING message to the Twitch IRC server.
         /// </summary>
-        [ContextMenu("Ping Server")]
-        public void Ping() => connection?.Ping();
-
-        private IEnumerator ConnectCoroutine()
-        {
-            // End any current connection
-            if (connection != null)
-                Disconnect();
-
-            // Verify that login information has been provided
-            if (twitchCredentials.Token.Length <= 0 || twitchCredentials.Username.Length <= 0 || twitchCredentials.Channel.Length <= 0)
-            {
-                alertQueue.Enqueue(ConnectionAlert.MissingLogin);
-                yield break;
-            }
-
-            // Fix formatting (twitchapps.com)
-            if (twitchCredentials.Token.StartsWith("oauth:"))
-                twitchCredentials.Token = twitchCredentials.Token.Substring(6);
-
-            // Create a new connection to Twitch IRC
-            connection = new TwitchClient(twitchCredentials);
-
-            // Check the connection
-            /*
-            if (connection.tcpClient == null || !connection.tcpClient.Connected)
-            {
-                alertQueue.Enqueue(ConnectionAlert.NoConnection);
-                yield break;
-            }
-
-            // Wait for an interval if there has been more than one failed connection attempt
-            if (failCount >= 2)
-                yield return new WaitForSecondsRealtime(1 << (failCount - 2));
-            */
-
-            // Begin the threads and attempt to authenticate
-            connection.Begin();
-        }
+        [ContextMenu("Ping")]
+        public void Ping() => Client?.Ping();
 
         /// <summary>
-        /// A coroutine which instructs the send/receive threads to terminate, waits for them to end, then closes the TCP connection.
+        /// Sets the credentials used to connect to Twitch. This will cause the connection to be reset.
         /// </summary>
-        private IEnumerator DisconnectCoroutine(TwitchClient connection)
+        /// <param name="credentials">The new credentials to use.</param>
+        public void SetCredentials(TwitchCredentials credentials)
         {
-            if (connection == null) yield break;
-
-            // Finish processing any pending information
-            HandlePendingInformation();
-
-            // Close the connection
-            var endTask = connection.EndAsync();
-            while (!endTask.IsCompleted) yield return null;
-
-            // Reset connection variable
-            if (this.connection == connection)
-                this.connection = null;
-
-            Debug.LogWarning("Disconnected from Twitch IRC");
+            Client?.End();
+            Credentials = credentials;
+            SetupClient();
+            Client.Begin();
         }
 
-        /*
-        /// <summary>
-        /// Disconnect from Twitch IRC. <b>Blocks the main thread. Use carefully.</b>
-        /// </summary>
-        private void BlockingDisconnect(TwitchConnection connection)
+        private void Start()
         {
-            if (connection == null)
-                return;
-
-            // Finish processing any pending information
-            HandlePendingInformation();
-
-            // End the connection
-            connection.BlockingEndAndClose();
-
-            // Reset connection
-            if (connection == this.connection)
-                this.connection = null;
-
-            Debug.LogWarning("Disconnected from Twitch IRC");
+            SetupClient();
+            if (ConnectOnStart) Connect();
         }
-        */
+
+        private void Update()
+        {
+            HandlePendingInformation();
+            Client.LogIrcMessages = DebugIrc;
+        }
+
+        private void OnDisable()
+        {
+            Disconnect();
+        }
+
+        private void OnDestroy()
+        {
+            Disconnect();
+        }
+
+        private void SetupClient()
+        {
+            Client = new TwitchClient(Credentials);
+            Client.LogIrcMessages = DebugIrc;
+            Client.ChatMessageEvent += message => _chatterQueue.Enqueue(message);
+            Client.ConnectionAlertEvent += alert => _alertQueue.Enqueue(alert);
+        }
 
         /// <summary>
         /// Handles pending information received from the current connection
         /// </summary>
         private void HandlePendingInformation()
         {
-            while (!chatterQueue.IsEmpty)
-            {
-                if (chatterQueue.TryDequeue(out var chatter))
-                    ChatMessageEvent?.Invoke(chatter);
-            }
-
-            while (!alertQueue.IsEmpty)
-            {
-                if (alertQueue.TryDequeue(out var alert))
-                    HandleConnectionAlert(alert);
-            }
-
-            if (connection != null && clientUserTags != connection.ClientUserTags)
-                clientUserTags = connection.ClientUserTags;
+            while (_chatterQueue.Count > 0) ChatMessageEvent.Invoke(_chatterQueue.Dequeue());
+            while (_alertQueue.Count > 0) HandleConnectionAlert(_alertQueue.Dequeue());
         }
 
         /// <summary>
@@ -312,28 +164,22 @@ namespace Incredulous.Twitch
                 case ConnectionAlert.BAD_LOGIN:
                 case ConnectionAlert.MISSING_LOGIN:
                 case ConnectionAlert.NO_CONNECTION:
-                    Debug.LogError(alert.message);
-                    failCount = 0;
-                    Disconnect();
-                    break;
-
                 case ConnectionAlert.CONNECTION_INTERRUPTED:
                     Debug.LogError(alert.message);
-                    failCount++;
-                    Connect();
-                    break;
-
-                case ConnectionAlert.JOINED_CHANNEL:
-                    Debug.Log(alert.message);
-                    failCount = 0;
                     break;
 
                 default:
                     Debug.Log(alert.message);
                     break;
             }
-            ConnectionAlertEvent?.Invoke(alert);
+            ConnectionAlertEvent.Invoke(alert);
         }
+
+        [Serializable]
+        public class ChatMessageUnityEvent : UnityEvent<Chatter> { }
+
+        [Serializable]
+        public class ConnectionAlertUnityEvent : UnityEvent<ConnectionAlert> { }
     }
 
 }
