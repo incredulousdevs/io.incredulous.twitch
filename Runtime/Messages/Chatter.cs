@@ -35,11 +35,6 @@ namespace Incredulous.Twitch
         }
 
         /// <summary>
-        /// Returns true if name is "font-safe" meaning that it only contains characters: a-z, A-Z, 0-9, _
-        /// </summary>
-        public bool IsDisplayNameFontSafe() => true;// ParseHelper.CheckNameRegex(Tags.DisplayName);
-
-        /// <summary>
         /// Returns whether the message contain a given emote.
         /// </summary>
         public bool ContainsEmote(string emote) => Tags.ContainsEmote(emote);
