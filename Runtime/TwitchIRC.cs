@@ -62,7 +62,7 @@ namespace Incredulous.Twitch
         /// <summary>
         /// Whether the Twitch client is successfully connected to Twitch.
         /// </summary>
-        public bool IsConnected => connection.ConnectionStatus == TwitchConnection.Status.Connected;
+        public bool IsConnected => connection.ConnectionStatus == TwitchClient.Status.Connected;
 
         /// <summary>
         /// The first created instance of TwitchIRC, if it exists.
@@ -88,7 +88,7 @@ namespace Incredulous.Twitch
         /// <summary>
         /// The current Twitch connection.
         /// </summary>
-        private TwitchConnection connection;
+        private TwitchClient connection;
 
         /// <summary>
         /// The number of times a connection attempt has sequentially failed.
@@ -218,7 +218,7 @@ namespace Incredulous.Twitch
                 twitchCredentials.Token = twitchCredentials.Token.Substring(6);
 
             // Create a new connection to Twitch IRC
-            connection = new TwitchConnection(twitchCredentials);
+            connection = new TwitchClient(twitchCredentials);
 
             // Check the connection
             /*
@@ -240,7 +240,7 @@ namespace Incredulous.Twitch
         /// <summary>
         /// A coroutine which instructs the send/receive threads to terminate, waits for them to end, then closes the TCP connection.
         /// </summary>
-        private IEnumerator DisconnectCoroutine(TwitchConnection connection)
+        private IEnumerator DisconnectCoroutine(TwitchClient connection)
         {
             if (connection == null) yield break;
 

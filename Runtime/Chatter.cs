@@ -2,50 +2,51 @@ using UnityEngine;
 
 namespace Incredulous.Twitch
 {
-
     [System.Serializable]
     public class Chatter
     {
         public Chatter(string login, string channel, string message, IRCTags tags)
         {
-            this.login = login;
-            this.channel = channel;
-            this.message = message;
-            this.tags = tags;
+            Login = login;
+            Channel = channel;
+            Message = message;
+            Tags = tags;
         }
 
-        public string login, channel, message;
-        public IRCTags tags = null;
+        public string Login { get; private set; }
+        public string Channel { get; private set; }
+        public string Message { get; private set; }
+        public IRCTags Tags { get; private set; }
 
         /// <summary>
         /// Get RGBA color using HEX color code
         /// </summary>
         public Color GetRGBAColor()
         {
-            if (ColorUtility.TryParseHtmlString(tags.colorHex, out Color color))
+            if (ColorUtility.TryParseHtmlString(Tags.ColorHex, out Color color))
+            {
                 return color;
+            }
             else
+            {
                 //Return default white if parsing fails for some reason
                 return new Color(1, 1, 1, 1);
+            }
         }
 
         /// <summary>
         /// Returns true if name is "font-safe" meaning that it only contains characters: a-z, A-Z, 0-9, _
         /// </summary>
-        public bool IsDisplayNameFontSafe()
-        {
-            return ParseHelper.CheckNameRegex(tags.displayName);
-        }
+        public bool IsDisplayNameFontSafe() => ParseHelper.CheckNameRegex(Tags.DisplayName);
 
         /// <summary>
         /// Returns whether the message contain a given emote.
         /// </summary>
-        public bool ContainsEmote(string emote) => tags.ContainsEmote(emote);
+        public bool ContainsEmote(string emote) => Tags.ContainsEmote(emote);
 
         /// <summary>
         /// Returns whether the message has a given badge.
         /// </summary>
-        public bool HasBadge(string badge) => tags.HasBadge(badge);
+        public bool HasBadge(string badge) => Tags.HasBadge(badge);
     }
-
 }

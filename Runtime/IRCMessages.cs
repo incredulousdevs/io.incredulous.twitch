@@ -1,63 +1,48 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Linq;
 
 namespace Incredulous.Twitch
 {
-
-    [System.Serializable]
+    [Serializable]
     public struct ChatterEmote
     {
-        [System.Serializable]
+        public string Id;
+        public Index[] Indexes;
+
+        [Serializable]
         public struct Index
         {
-            public int startIndex;
-            public int endIndex;
+            public int Start;
+            public int End;
         }
-
-        public string id;
-        public Index[] indexes;
     }
 
-    [System.Serializable]
+    [Serializable]
     public struct ChatterBadge
     {
-        public string id;
-        public string version;
+        public string Id;
+        public string Version;
     }
 
-    [System.Serializable]
+    [Serializable]
     public class IRCTags
     {
-        public string colorHex = "#FFFFFF";
-        public string displayName = string.Empty;
-        public string channelId = string.Empty;
-        public string userId = string.Empty;
+        public string ColorHex = "#FFFFFF";
+        public string DisplayName = string.Empty;
+        public string ChannelId = string.Empty;
+        public string UserId = string.Empty;
 
-        public ChatterBadge[] badges = new ChatterBadge[0];
-        public ChatterEmote[] emotes = new ChatterEmote[0];
+        public ChatterBadge[] Badges = new ChatterBadge[0];
+        public ChatterEmote[] Emotes = new ChatterEmote[0];
 
         /// <summary>
         /// Returns whether the tags contain a given emote.
         /// </summary>
-        public bool ContainsEmote(string emote)
-        {
-            foreach (ChatterEmote e in emotes)
-            {
-                if (e.id == emote) return true;
-            }
-            return false;
-        }
+        public bool ContainsEmote(string emote) => Emotes.Any(e => e.Id == emote);
 
         /// <summary>
         /// Returns whether the tags contain a given badge.
         /// </summary>
-        public bool HasBadge(string badge)
-        {
-            foreach (ChatterBadge b in badges)
-            {
-                if (b.id == badge) return true;
-            }
-            return false;
-        }
+        public bool HasBadge(string badge) => Badges.Any(b => b.Id == badge);
     }
-
 }

@@ -1,12 +1,12 @@
-﻿using System.Linq;
+﻿using System;
+using System.Linq;
 using System.Text.RegularExpressions;
+using UnityEngine;
 
 namespace Incredulous.Twitch
 {
-
     internal static class ParseHelper
     {
-
         public static int IndexOfNth(this string source, char val, int nth = 0)
         {
             int index = source.IndexOf(val);
@@ -46,27 +46,27 @@ namespace Incredulous.Twitch
                 switch (split[i].Substring(0, split[i].IndexOf('=')))
                 {
                     case "badges":
-                        tags.badges = ParseBadges(value.Split(','));
+                        tags.Badges = ParseBadges(value.Split(','));
                         continue;
 
                     case "color":
-                        tags.colorHex = value;
+                        tags.ColorHex = value;
                         continue;
 
                     case "display-name":
-                        tags.displayName = value;
+                        tags.DisplayName = value;
                         continue;
 
                     case "emotes":
-                        tags.emotes = ParseTwitchEmotes(value.Split('/')).OrderBy(t => t.indexes[0].startIndex).ToArray();
+                        tags.Emotes = ParseTwitchEmotes(value.Split('/')).OrderBy(t => t.Indexes[0].Start).ToArray();
                         continue;
 
                     case "room-id": // room-id = channelId
-                        tags.channelId = value;
+                        tags.ChannelId = value;
                         continue;
 
                     case "user-id":
-                        tags.userId = value;
+                        tags.UserId = value;
                         continue;
                 }
             }
@@ -105,14 +105,14 @@ namespace Incredulous.Twitch
                 for (int j = 0; j < indexes.Length; ++j)
                 {
                     var hyphenPos = indexStrings[j].IndexOf('-');
-                    indexes[j].startIndex = int.Parse(indexStrings[j].Substring(0, hyphenPos));
-                    indexes[j].endIndex = int.Parse(indexStrings[j].Substring(hyphenPos + 1));
+                    indexes[j].Start = int.Parse(indexStrings[j].Substring(0, hyphenPos));
+                    indexes[j].End = int.Parse(indexStrings[j].Substring(hyphenPos + 1));
                 }
 
                 emotes[i] = new ChatterEmote()
                 {
-                    id = str.Substring(0, colonPos),
-                    indexes = indexes
+                    Id = str.Substring(0, colonPos),
+                    Indexes = indexes
                 };
             }
 
@@ -127,12 +127,11 @@ namespace Incredulous.Twitch
             {
                 var str = badgeStrings[i];
                 var divider = str.IndexOf('/');
-                badges[i].id = str.Substring(0, divider);
-                badges[i].version = str.Substring(divider + 1);
+                badges[i].Id = str.Substring(0, divider);
+                badges[i].Version = str.Substring(divider + 1);
             }
 
             return badges;
         }
     }
-
 }
