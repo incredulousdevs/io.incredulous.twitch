@@ -1,22 +1,27 @@
+using System;
 using UnityEngine;
 
 namespace Incredulous.Twitch
 {
-    [System.Serializable]
-    public class Chatter
+    public abstract class ChatMessageBase
     {
-        public Chatter(string login, string channel, string message, Tags tags)
+        public ChatMessageBase(string login, string channel, Tags tags)
         {
             Login = login;
             Channel = channel;
-            Message = message;
             Tags = tags;
         }
 
-        public string Login { get; private set; }
-        public string Channel { get; private set; }
-        public string Message { get; private set; }
-        public Tags Tags { get; private set; }
+        internal ChatMessageBase(Message message)
+        {
+            Login = message.Source.Nick;
+            Channel = ((ChannelCommand)message.Command).Channel;
+            Tags = message.Tags;
+        }
+
+        [field: SerializeField] public string Login { get; private set; }
+        [field: SerializeField] public string Channel { get; private set; }
+        [field: SerializeField] public Tags Tags { get; private set; }
 
         /// <summary>
         /// Get RGBA color using HEX color code

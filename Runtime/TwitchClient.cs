@@ -75,6 +75,11 @@ namespace Incredulous.Twitch
         public event ChatMessageEventHandler ChatMessageEvent;
 
         /// <summary>
+        /// An event which is triggered when a new bot command message is received.
+        /// </summary>
+        public event BotCommandMessageEventHandler BotCommandMessageEvent;
+
+        /// <summary>
         /// An event which is triggered when the connection status changes.
         /// </summary>
         public event ConnectionAlertEventHandler ConnectionAlertEvent;
@@ -327,9 +332,15 @@ namespace Incredulous.Twitch
                     break;
 
                 // Chat message
-                // TODO: handle bot commands separately
                 case "PRIVMSG":
-                    ChatMessageEvent?.Invoke(new Chatter(message.Source.Nick, ((ChannelCommand)message.Command).Channel, message.Parameters, message.Tags));
+                    if (message.Command is BotCommand)
+                    {
+                        BotCommandMessageEvent?.Invoke(new BotCommandMessage(message));
+                    }
+                    else
+                    {
+                        ChatMessageEvent?.Invoke(new ChatMessage(message));
+                    }
                     break;
 
                 case "USERSTATE":
@@ -390,7 +401,12 @@ namespace Incredulous.Twitch
         /// <summary>
         /// A delegate which handles a new chat message from the server.
         /// </summary>
-        public delegate void ChatMessageEventHandler(Chatter chatter);
+        public delegate void ChatMessageEventHandler(ChatMessage message);
+
+        /// <summary>
+        /// A delegate which handles a new bot command message from the server.
+        /// </summary>
+        public delegate void BotCommandMessageEventHandler(BotCommandMessage message);
 
         /// <summary>
         /// A delegate which handles a status update from the Twitch IRC client.

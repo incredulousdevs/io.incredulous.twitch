@@ -24,6 +24,9 @@ namespace Incredulous.Twitch
         [field: Tooltip("An event which is triggered when a new chat message is received.")]
         [field: SerializeField] public ChatMessageUnityEvent ChatMessageEvent { get; private set; } = new ChatMessageUnityEvent();
 
+        [field: Tooltip("An event which is triggered when a new bot command message is received.")]
+        [field: SerializeField] public BotCommandMessageUnityEvent BotCommandMessageEvent { get; private set; } = new BotCommandMessageUnityEvent();
+
         [field: Tooltip("An event which is triggered when the connection status changes.")]
         [field: SerializeField] public ConnectionAlertUnityEvent ConnectionAlertEvent { get; private set; } = new ConnectionAlertUnityEvent();
 
@@ -50,7 +53,12 @@ namespace Incredulous.Twitch
         /// <summary>
         /// A queue for incoming chat messages.
         /// </summary>
-        private readonly Queue<Chatter> _chatterQueue = new Queue<Chatter>();
+        private readonly Queue<ChatMessage> _chatMessageQueue = new Queue<ChatMessage>();
+
+        /// <summary>
+        /// A queue for incoming bot command messages.
+        /// </summary>
+        private readonly Queue<BotCommandMessage> _botCommandMessageQueue = new Queue<BotCommandMessage>();
 
         /// <summary>
         /// Whether the controller has been instructed to maintain a connection.
@@ -141,7 +149,8 @@ namespace Incredulous.Twitch
         {
             Client = new TwitchClient(Credentials);
             Client.LogIrcMessages = DebugIrc;
-            Client.ChatMessageEvent += message => _chatterQueue.Enqueue(message);
+            Client.ChatMessageEvent += message => _chatMessageQueue.Enqueue(message);
+            Client.BotCommandMessageEvent += message => _botCommandMessageQueue.Enqueue(message);
             Client.ConnectionAlertEvent += alert => _alertQueue.Enqueue(alert);
         }
 
@@ -150,7 +159,8 @@ namespace Incredulous.Twitch
         /// </summary>
         private void HandlePendingInformation()
         {
-            while (_chatterQueue.Count > 0) ChatMessageEvent.Invoke(_chatterQueue.Dequeue());
+            while (_botCommandMessageQueue.Count > 0) BotCommandMessageEvent.Invoke(_botCommandMessageQueue.Dequeue());
+            while (_chatMessageQueue.Count > 0) ChatMessageEvent.Invoke(_chatMessageQueue.Dequeue());
             while (_alertQueue.Count > 0) HandleConnectionAlert(_alertQueue.Dequeue());
         }
 
@@ -176,7 +186,10 @@ namespace Incredulous.Twitch
         }
 
         [Serializable]
-        public class ChatMessageUnityEvent : UnityEvent<Chatter> { }
+        public class ChatMessageUnityEvent : UnityEvent<ChatMessage> { }
+
+        [Serializable]
+        public class BotCommandMessageUnityEvent : UnityEvent<BotCommandMessage> { }
 
         [Serializable]
         public class ConnectionAlertUnityEvent : UnityEvent<ConnectionAlert> { }
