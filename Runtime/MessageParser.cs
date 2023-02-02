@@ -4,7 +4,7 @@ using UnityEngine;
 
 namespace Incredulous.Twitch
 {
-    public class MessageParser
+    internal class MessageParser
     {
         public Message ParseMessage(string message)
         {

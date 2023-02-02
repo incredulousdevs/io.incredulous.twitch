@@ -9,7 +9,7 @@ namespace Incredulous.Twitch
     /// <summary>
     /// A class which manages connections to the Twitch IRC API.
     /// </summary>
-    public partial class TwitchController : MonoBehaviour
+    public class TwitchController : MonoBehaviour
     {
         [field: Tooltip("The information used to authenticate with Twitch.")]
         [field: SerializeField] public TwitchCredentials Credentials { get; private set; }

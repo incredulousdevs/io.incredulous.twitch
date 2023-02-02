@@ -8,7 +8,7 @@ using UnityEngine;
 
 namespace Incredulous.Twitch
 {
-    public partial class TwitchClient
+    public class TwitchClient
     {
         private const string TWITCH_WEBSOCKET_URL = "wss://irc-ws.chat.twitch.tv:443";
         private const int RECEIVE_BUFFER_SIZE = 512;
