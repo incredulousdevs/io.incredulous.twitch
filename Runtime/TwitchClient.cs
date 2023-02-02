@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Net.Sockets;
 using System.Net.WebSockets;
 using System.Text;
 using System.Threading;
@@ -17,6 +16,7 @@ namespace Incredulous.Twitch
 
         private readonly Queue<string> _outputQueue = new Queue<string>();
         private readonly Queue<DateTime> _outputTimestamps = new Queue<DateTime>();
+        private readonly MessageParser _parser = new MessageParser();
 
         public TwitchClient(TwitchCredentials credentials)
         {
@@ -309,113 +309,54 @@ namespace Incredulous.Twitch
         /// </summary>
         private void HandleLine(string raw)
         {
-            raw = raw.Trim(' ', '\n', '\r');
-
             if (LogIrcMessages) Debug.Log("<color=#005ae0><b>[IRC INPUT]</b></color> " + raw);
 
-            // Respond to PING messages
-            if (raw.StartsWith("PING"))
+            var message = _parser.ParseMessage(raw.Trim(' ', '\n', '\r'));
+            if (message == null) return;
+
+            switch (message.Command.Type)
             {
-                Send("PONG :tmi.twitch.tv");
-                return;
-            }
+                // Respond to PING messages
+                case "PING":
+                    Send("PONG :tmi.twitch.tv");
+                    break;
 
-            // Notify when PONG messages are received.
-            if (raw.StartsWith(":tmi.twitch.tv PONG"))
-            {
-                ConnectionAlertEvent?.Invoke(ConnectionAlert.Pong);
-                return;
-            }
+                // Notify when PONG messages are received.
+                case "PONG":
+                    ConnectionAlertEvent?.Invoke(ConnectionAlert.Pong);
+                    break;
 
-            string ircString = raw;
-            string tagString = string.Empty;
+                // Chat message
+                // TODO: handle bot commands separately
+                case "PRIVMSG":
+                    ChatMessageEvent?.Invoke(new Chatter(message.Source.Nick, ((ChannelCommand)message.Command).Channel, message.Parameters, message.Tags));
+                    break;
 
-            if (raw[0] == '@')
-            {
-                int ind = raw.IndexOf(' ');
+                case "USERSTATE":
+                    ClientUserTags = message.Tags;
+                    UpdateRateLimits(ClientUserTags);
+                    break;
 
-                tagString = raw.Substring(0, ind);
-                ircString = raw.Substring(ind).TrimStart();
-            }
+                case "NOTICE":
+                    if (message.Parameters == "Login authentication failed")
+                    {
+                        ConnectionAlertEvent?.Invoke(ConnectionAlert.BadLogin);
+                        TerminateConnection();
+                    }
+                    break;
 
-            if (ircString[0] == ':')
-            {
-                string type = ircString.Substring(ircString.IndexOf(' ')).TrimStart();
-                type = type.Split(' ')[0];
+                // Successful channel join
+                case "353":
+                    ConnectionAlertEvent?.Invoke(ConnectionAlert.JoinedChannel);
+                    break;
 
-                switch (type)
-                {
-                    case "PRIVMSG": // = Chat message
-                        HandlePRIVMSG(ircString, tagString);
-                        break;
-                    case "USERSTATE": // = Userstate
-                        HandleUSERSTATE(ircString, tagString);
-                        break;
-                    case "NOTICE": // = Notice
-                        HandleNOTICE(ircString, tagString);
-                        break;
-                    case "353": // = Successful channel join
-                    case "001": // = Successful IRC connection
-                        HandleRPL(type);
-                        break;
-                }
-            }
-        }
-
-        /// <summary>
-        /// Handles a NOTICE message from the server.
-        /// </summary>
-        private void HandleNOTICE(string ircString, string tagString)
-        {
-            if (ircString.Contains(":Login authentication failed"))
-            {
-                ConnectionAlertEvent?.Invoke(ConnectionAlert.BadLogin);
-                TerminateConnection();
-            }
-        }
-
-        /// <summary>
-        /// Handles an RPL message from the server.
-        /// </summary>
-        private void HandleRPL(string type)
-        {
-            switch (type)
-            {
+                // Successful IRC connection
                 case "001":
+                    ConnectionStatus = Status.Connected;
                     ConnectionAlertEvent?.Invoke(ConnectionAlert.ConnectedToServer);
                     Send("JOIN #" + Credentials.Channel.ToLower());
                     break;
-                case "353":
-                    ConnectionStatus = Status.Connected;
-                    ConnectionAlertEvent?.Invoke(ConnectionAlert.JoinedChannel);
-                    break;
             }
-        }
-
-        /// <summary>
-        /// Handles a PRIVMSG command form the server.
-        /// </summary>
-        private void HandlePRIVMSG(string ircString, string tagString)
-        {
-            // Parse PRIVMSG
-            var login = ParseHelper.ParseLoginName(ircString);
-            var channel = ParseHelper.ParseChannel(ircString);
-            var message = ParseHelper.ParseMessage(ircString);
-            var tags = ParseHelper.ParseTags(tagString);
-
-            // Queue chatter object
-            ChatMessageEvent?.Invoke(new Chatter(login, channel, message, tags));
-        }
-
-        /// <summary>
-        /// Handles a USERSTATE command form the server.
-        /// </summary>
-        private void HandleUSERSTATE(string ircString, string tagString)
-        {
-            // Update the client user tags
-            var tags = ParseHelper.ParseTags(tagString);
-            ClientUserTags = tags;
-            UpdateRateLimits(tags);
         }
 
         /// <summary>
