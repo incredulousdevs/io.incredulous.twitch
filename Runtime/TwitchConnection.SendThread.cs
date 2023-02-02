@@ -2,6 +2,7 @@
 using System.IO;
 using System.Text;
 using System.Collections.Generic;
+using System.Net.WebSockets;
 using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
@@ -18,9 +19,6 @@ namespace Incredulous.Twitch
         /// </summary>
         private async Task SendProcess(CancellationToken cancellationToken)
         {
-            await Task.Yield();
-            var stream = _tcpClient.GetStream();
-
             try
             {
                 while (!cancellationToken.IsCancellationRequested && _outputQueue.Count > 0)
@@ -37,7 +35,7 @@ namespace Incredulous.Twitch
                         var bytes = Encoding.UTF8.GetBytes(message);
 
                         // Send the message
-                        await stream.WriteAsync(bytes, cancellationToken);
+                        await _webSocketClient.SendAsync(bytes, WebSocketMessageType.Text, true, cancellationToken);
 
                         // Record the time that this message was sent
                         _outputTimestamps.Enqueue(DateTime.Now);
@@ -91,7 +89,7 @@ namespace Incredulous.Twitch
             _outputQueue.Enqueue(value);
 
             // Start the send process if it is not running
-            if (_sendProcess == null || _sendProcess.IsCompleted) _sendProcess = SendProcess(_childProcessCancellationSource.Token);
+            if (_sendProcess == null || _sendProcess.IsCompleted) _sendProcess = SendProcess(_cancellationTokenSource.Token);
         }
     }
 }

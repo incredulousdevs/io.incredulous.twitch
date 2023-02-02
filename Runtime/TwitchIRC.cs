@@ -218,7 +218,7 @@ namespace Incredulous.Twitch
                 twitchCredentials.Token = twitchCredentials.Token.Substring(6);
 
             // Create a new connection to Twitch IRC
-            connection = new TwitchConnection(ircAddress, port, twitchCredentials);
+            connection = new TwitchConnection(twitchCredentials);
 
             // Check the connection
             /*

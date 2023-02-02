@@ -4,19 +4,22 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Net.Sockets;
+using System.Net.WebSockets;
 using UnityEngine;
 
 namespace Incredulous.Twitch
 {
     public partial class TwitchConnection
     {
+        private const int RECEIVE_BUFFER_SIZE = 512;
+
         /// <summary>
         /// The IRC input process which will run on the receive thread.
         /// </summary>
         private async Task ReceiveProcess(CancellationToken cancellationToken)
         {
-            var stream = _tcpClient.GetStream();
-            var buffer = new byte[_tcpClient.ReceiveBufferSize];
+            //var stream = _webSocketClient.GetStream();
+            var buffer = new byte[512];
             var builder = new StringBuilder();
 
             try
@@ -27,26 +30,34 @@ namespace Incredulous.Twitch
                     //if (!stream.DataAvailable) continue;
 
                     Debug.Log("Beginning read...");
-                    var count = await stream.ReadAsync(buffer, cancellationToken);
-                    var received = Encoding.UTF8.GetString(buffer, 0, count);
-                    Debug.Log($"Received: {received}");
-
-                    for (var i = 0; i < count; i++)
+                    var more = true;
+                    while (more)
                     {
-                        if (received[i] == '\n' || received[i] == '\r')
+                        var result = await _webSocketClient.ReceiveAsync(buffer, cancellationToken);
+                        if (result.CloseStatus != null) throw new WebSocketException("Connection closed by server.");
+
+                        var received = Encoding.UTF8.GetString(buffer, 0, result.Count);
+                        Debug.Log($"Received: {received}");
+
+                        for (var i = 0; i < received.Length; i++)
                         {
-                            var line = builder.ToString();
-                            builder.Clear();
+                            if (received[i] == '\n' || received[i] == '\r')
+                            {
+                                var line = builder.ToString();
+                                builder.Clear();
 
-                            if (!string.IsNullOrEmpty(line)) HandleLine(line);
+                                if (!string.IsNullOrEmpty(line)) HandleLine(line);
 
-                            continue;
+                                continue;
+                            }
+
+                            builder.Append(received[i]);
                         }
-
-                        builder.Append(received[i]);
+                        
+                        more = !result.EndOfMessage;
                     }
 
-                    await Task.Yield();
+                    await Task.Delay(100);
                 }
             }
             catch (IOException ex)

@@ -1,4 +1,5 @@
-﻿using System.Collections;
+﻿using System;
+using System.Collections;
 using System.Collections.Concurrent;
 using System.Net.Sockets;
 using System.Net.WebSockets;
@@ -10,11 +11,8 @@ namespace Incredulous.Twitch
 {
     public partial class TwitchConnection
     {
-        public TwitchConnection(string ircAddress, int port, TwitchCredentials credentials)
+        public TwitchConnection(TwitchCredentials credentials)
         {
-            _ircAddress = ircAddress;
-            _ircPort = port;
-
             Credentials = new TwitchCredentials
             {
                 Username = credentials.Username.ToLower(),
@@ -27,15 +25,15 @@ namespace Incredulous.Twitch
             LogIrcMessages = true;
         }
 
-        private TcpClient _tcpClient;
-        private string _ircAddress;
-        private int _ircPort;
+        private const string TWITCH_WEBSOCKET_URL = "wss://irc-ws.chat.twitch.tv:443";
+
+        private ClientWebSocket _webSocketClient;
+        private bool _maintainConnection;
 
         private Task _connectionProcess;
         private Task _receiveProcess;
         private Task _sendProcess;
-        private TaskCompletionSource<bool> _parentProcessContinuationTcs;
-        private CancellationTokenSource _childProcessCancellationSource;
+        private CancellationTokenSource _cancellationTokenSource;
 
         public TwitchCredentials Credentials { get; }
 
@@ -100,59 +98,56 @@ namespace Incredulous.Twitch
 
         private async Task ConnectionProcess()
         {
-            var maintainConnection = true;
+            _maintainConnection = true;
             ConnectionStatus = Status.Connecting;
 
-            while (maintainConnection)
+            while (_maintainConnection)
             {
-                // Create a new continuation task
-                _parentProcessContinuationTcs = new TaskCompletionSource<bool>();
-
-                // Initialize the connection
-                _tcpClient = new TcpClient
-                {
-                    ReceiveTimeout = 1000,
-                    SendTimeout = 5000
-                };
-                Debug.Log("Connecting...");
-                await _tcpClient.ConnectAsync(_ircAddress, _ircPort);
-
-                // Begin receive processes
-                Debug.Log("Starting receive process...");
-                _childProcessCancellationSource = new CancellationTokenSource();
-                _receiveProcess = ReceiveProcess(_childProcessCancellationSource.Token);
-
-                // Queue login commands
-                Debug.Log("Sending initial commands...");
-                Send("CAP REQ :twitch.tv/tags twitch.tv/commands");
-                Send("PASS oauth:" + Credentials.Token);
-                Send("NICK " + Credentials.Username);
-
-                // NOTE: Updating the connection status to "Connected" is handled in the method HandleRPL
-
-                // Wait while the connection is live
-                maintainConnection = await _parentProcessContinuationTcs.Task;
-
-                // Update the connection status
-                ConnectionStatus = maintainConnection ? Status.Connecting : Status.Disconnecting;
-
-                // Terminate the send/receive processes
-                _childProcessCancellationSource.Cancel();
-
-                // Await each process, discard errors
                 try
                 {
-                    await _receiveProcess;
-                }
-                catch { }
+                    // Create a new continuation task
+                    _cancellationTokenSource = new CancellationTokenSource();
 
-                try
+                    // Initialize the connection
+                    _webSocketClient = new ClientWebSocket();
+                    Debug.Log("Connecting...");
+                    await _webSocketClient.ConnectAsync(new Uri(TWITCH_WEBSOCKET_URL), _cancellationTokenSource.Token);
+
+                    // Begin receive processes
+                    Debug.Log("Starting receive process...");
+                    _receiveProcess = ReceiveProcess(_cancellationTokenSource.Token);
+
+                    // Queue login commands
+                    Debug.Log("Sending initial commands...");
+                    Send("CAP REQ :twitch.tv/tags twitch.tv/commands");
+                    Send("PASS oauth:" + Credentials.Token);
+                    Send("NICK " + Credentials.Username);
+
+                    // NOTE: Updating the connection status to "Connected" is handled in the method HandleRPL
+
+                    // Await each process, discard errors
+                    try
+                    {
+                        await _receiveProcess;
+                    }
+                    catch { }
+
+                    try
+                    {
+                        await _sendProcess;
+                    }
+                    catch { }
+
+                    await _webSocketClient.CloseAsync(WebSocketCloseStatus.NormalClosure, "", _cancellationTokenSource.Token);
+                }
+                catch (Exception ex)
                 {
-                    await _sendProcess;
+                    Debug.LogException(ex);
                 }
-                catch { }
-
-                _tcpClient.Close();
+                finally
+                {
+                    await Task.Delay(500);
+                }
             }
 
             ConnectionStatus = Status.Disconnected;
@@ -161,12 +156,15 @@ namespace Incredulous.Twitch
 
         private void RetryConnection()
         {
-            _parentProcessContinuationTcs.TrySetResult(true);
+            ConnectionStatus = Status.Connecting;
+            _cancellationTokenSource.Cancel();
         }
 
         private void TerminateConnection()
         {
-            _parentProcessContinuationTcs.TrySetResult(false);
+            _maintainConnection = false;
+            ConnectionStatus = Status.Disconnecting;
+            _cancellationTokenSource.Cancel();
         }
 
         /// <summary>
