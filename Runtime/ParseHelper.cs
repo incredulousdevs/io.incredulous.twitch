@@ -1,7 +1,6 @@
 ﻿using System;
-using System.Linq;
+using System.Collections.Generic;
 using System.Text.RegularExpressions;
-using UnityEngine;
 
 namespace Incredulous.Twitch
 {
@@ -29,9 +28,9 @@ namespace Incredulous.Twitch
         /// <returns>True if the name uses only simple characters, false othewise.</returns>
         public static bool CheckNameRegex(string displayName) => _symbolRegex.IsMatch(displayName);
 
-        public static IRCTags ParseTags(string tagString)
+        public static Tags ParseTags(string tagString)
         {
-            IRCTags tags = new IRCTags();
+            Tags tags = new Tags();
             string[] split = tagString.Split(';');
 
             //Loop through tags
@@ -58,7 +57,8 @@ namespace Incredulous.Twitch
                         continue;
 
                     case "emotes":
-                        tags.Emotes = ParseTwitchEmotes(value.Split('/')).OrderBy(t => t.Indexes[0].Start).ToArray();
+                        tags.Emotes = ParseTwitchEmotes(value.Split('/'));
+                        tags.Emotes.Sort((a, b) => a.Indices[0].Start.CompareTo(b.Indices[0].Start));
                         continue;
 
                     case "room-id": // room-id = channelId
@@ -89,9 +89,9 @@ namespace Incredulous.Twitch
             return ircString.Substring(ircString.IndexOfNth(' ', 2) + 2);
         }
 
-        public static ChatterEmote[] ParseTwitchEmotes(string[] emoteStrings)
+        public static List<Emote> ParseTwitchEmotes(string[] emoteStrings)
         {
-            var emotes = new ChatterEmote[emoteStrings.Length];
+            var emotes = new List<Emote>();
 
             for (int i = 0; i < emoteStrings.Length; i++)
             {
@@ -100,7 +100,7 @@ namespace Incredulous.Twitch
 
                 var indexSuperstring = str.Substring(colonPos + 1);
                 var indexStrings = indexSuperstring.Length > 0 ? indexSuperstring.Split(',') : new string[0];
-                var indexes = new ChatterEmote.Index[indexStrings.Length];
+                var indexes = new Emote.Index[indexStrings.Length];
 
                 for (int j = 0; j < indexes.Length; ++j)
                 {
@@ -109,26 +109,21 @@ namespace Incredulous.Twitch
                     indexes[j].End = int.Parse(indexStrings[j].Substring(hyphenPos + 1));
                 }
 
-                emotes[i] = new ChatterEmote()
-                {
-                    Id = str.Substring(0, colonPos),
-                    Indexes = indexes
-                };
+                emotes.Add(new Emote(str.Substring(0, colonPos), indexes));
             }
 
             return emotes;
         }
 
-        public static ChatterBadge[] ParseBadges(string[] badgeStrings)
+        public static List<Badge> ParseBadges(string[] badgeStrings)
         {
-            var badges = new ChatterBadge[badgeStrings.Length];
+            var badges = new List<Badge>();
 
             for (int i = 0; i < badgeStrings.Length; i++)
             {
                 var str = badgeStrings[i];
                 var divider = str.IndexOf('/');
-                badges[i].Id = str.Substring(0, divider);
-                badges[i].Version = str.Substring(divider + 1);
+                badges.Add(new Badge(str.Substring(0, divider), str.Substring(divider + 1)));
             }
 
             return badges;

@@ -1,13 +1,20 @@
 ﻿using System;
 using System.Linq;
+using System.Collections.Generic;
 
 namespace Incredulous.Twitch
 {
     [Serializable]
-    public struct ChatterEmote
+    public class Emote
     {
+        public Emote(string id, Index[] indices)
+        {
+            Id = id;
+            Indices = indices;
+        }
+
         public string Id;
-        public Index[] Indexes;
+        public Index[] Indices;
 
         [Serializable]
         public struct Index
@@ -18,22 +25,28 @@ namespace Incredulous.Twitch
     }
 
     [Serializable]
-    public struct ChatterBadge
+    public class Badge
     {
+        public Badge(string id, string version)
+        {
+            Id = id;
+            Version = version;
+        }
+
         public string Id;
         public string Version;
     }
 
     [Serializable]
-    public class IRCTags
+    public class Tags
     {
         public string ColorHex = "#FFFFFF";
         public string DisplayName = string.Empty;
         public string ChannelId = string.Empty;
         public string UserId = string.Empty;
 
-        public ChatterBadge[] Badges = new ChatterBadge[0];
-        public ChatterEmote[] Emotes = new ChatterEmote[0];
+        public List<Badge> Badges = new List<Badge>();
+        public List<Emote> Emotes = new List<Emote>();
 
         /// <summary>
         /// Returns whether the tags contain a given emote.

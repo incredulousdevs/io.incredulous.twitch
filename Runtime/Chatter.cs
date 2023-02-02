@@ -5,7 +5,7 @@ namespace Incredulous.Twitch
     [System.Serializable]
     public class Chatter
     {
-        public Chatter(string login, string channel, string message, IRCTags tags)
+        public Chatter(string login, string channel, string message, Tags tags)
         {
             Login = login;
             Channel = channel;
@@ -16,7 +16,7 @@ namespace Incredulous.Twitch
         public string Login { get; private set; }
         public string Channel { get; private set; }
         public string Message { get; private set; }
-        public IRCTags Tags { get; private set; }
+        public Tags Tags { get; private set; }
 
         /// <summary>
         /// Get RGBA color using HEX color code

@@ -57,7 +57,7 @@ namespace Incredulous.Twitch
         /// <summary>
         /// The client user's Twitch tags.
         /// </summary>
-        public IRCTags clientUserTags { get; private set; }
+        public Tags clientUserTags { get; private set; }
 
         /// <summary>
         /// Whether the Twitch client is successfully connected to Twitch.

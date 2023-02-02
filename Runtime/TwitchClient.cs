@@ -62,7 +62,7 @@ namespace Incredulous.Twitch
         /// <summary>
         /// The client user's Twitch tags.
         /// </summary>
-        public IRCTags ClientUserTags { get; private set; }
+        public Tags ClientUserTags { get; private set; }
 
         /// <summary>
         /// An event which is triggered when a new chat message is received.
@@ -436,7 +436,7 @@ namespace Incredulous.Twitch
         /// Updates the rate limit based on the user's tags
         /// </summary>
         /// <param name="tags">The user's tags.</param>
-        private void UpdateRateLimits(IRCTags tags)
+        private void UpdateRateLimits(Tags tags)
         {
             RateLimit = (tags.HasBadge("broadcaster") || tags.HasBadge("moderator")) ? RateLimit.ChatModerator : RateLimit.ChatRegular;
         }
