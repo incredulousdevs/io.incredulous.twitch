@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2023-02-02
+### Added
+- New BotCommandMessage class and associated events are used to handle commands
+### Changed
+- Numerous breaking API changes (See README for new API)
+- TwitchConnection is replaced by the new TwitchClient class.
+- TwitchIRC is replaced by the new TwitchController class.
+- Chatter is replaced by the new ChatMessage class.
+- Backend uses WebSockets instead of a TCP connection.
+- New message parsing based on Twitch's canonical example.
+
 ## [1.1.0] - 2022-01-20
 ### Added
 - TwitchIRC.singleton, which when true enables DontDestroyOnLoad and destroys duplicate instances

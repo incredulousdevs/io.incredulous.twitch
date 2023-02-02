@@ -1,6 +1,6 @@
 {
   "name": "io.incredulous.twitch",
-  "version": "2.0.0-pre",
+  "version": "2.0.0",
   "displayName": "Twitch IRC for Unity",
-  "description": "A lightweight Twitch.tv IRC client for Unity."
+  "description": "A fast, user-friendly Twitch IRC client for Unity projects."
 }

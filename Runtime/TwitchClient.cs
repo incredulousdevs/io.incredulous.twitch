@@ -8,6 +8,9 @@ using UnityEngine;
 
 namespace Incredulous.Twitch
 {
+    /// <summary>
+    /// A class which manages a connection to the Twitch IRC server.
+    /// </summary>
     public class TwitchClient
     {
         private const string TWITCH_WEBSOCKET_URL = "wss://irc-ws.chat.twitch.tv:443";
@@ -60,14 +63,14 @@ namespace Incredulous.Twitch
         public Status ConnectionStatus { get; private set; }
 
         /// <summary>
-        /// Whether all IRC message should be logged.
-        /// </summary>
-        public bool LogIrcMessages { get; set; }
-
-        /// <summary>
         /// The client user's Twitch tags.
         /// </summary>
         public Tags ClientUserTags { get; private set; }
+
+        /// <summary>
+        /// Whether all IRC message should be logged.
+        /// </summary>
+        public bool LogIrcMessages { get; set; }
 
         /// <summary>
         /// An event which is triggered when a new chat message is received.
@@ -94,12 +97,12 @@ namespace Incredulous.Twitch
         }
 
         /// <summary>
-        /// Close the connection.
+        /// Closes the connection.
         /// </summary>
         public void End() => _ = EndAsync();
 
         /// <summary>
-        /// Close the connection asynchronously.
+        /// Disconnects and waits for the connection to close.
         /// </summary>
         public async Task EndAsync()
         {
@@ -114,7 +117,7 @@ namespace Incredulous.Twitch
         public void Ping() => Send("PING :tmi.twitch.tv");
 
         /// <summary>
-        /// Queues a command to be sent to the IRC server.
+        /// Queues a pre-formatted command to be sent to the IRC server.
         /// </summary>
         public void SendCommand(string command) => Send(command);
 
@@ -414,7 +417,7 @@ namespace Incredulous.Twitch
         public delegate void ConnectionAlertEventHandler(ConnectionAlert connectionAlert);
 
         /// <summary>
-        /// A enumeration of connection states for the Twtch IRC client.
+        /// An enumeration of connection states for the Twtch IRC client.
         /// </summary>
         public enum Status
         {

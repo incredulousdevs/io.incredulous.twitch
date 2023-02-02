@@ -19,12 +19,17 @@ namespace Incredulous.Twitch
             Tags = message.Tags;
         }
 
+        [field: Tooltip("The login username of the sender.")]
         [field: SerializeField] public string Login { get; private set; }
+
+        [field: Tooltip("The channel where this message was sent.")]
         [field: SerializeField] public string Channel { get; private set; }
+
+        [field: Tooltip("The Twitch tags associate with this message.")]
         [field: SerializeField] public Tags Tags { get; private set; }
 
         /// <summary>
-        /// Get RGBA color using HEX color code
+        /// Gets the user's display color as a Unity color.
         /// </summary>
         public Color GetRGBAColor()
         {

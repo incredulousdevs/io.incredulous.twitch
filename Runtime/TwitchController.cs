@@ -7,7 +7,7 @@ using UnityEngine.Events;
 namespace Incredulous.Twitch
 {
     /// <summary>
-    /// A class which manages connections to the Twitch IRC API.
+    /// A MonoBehaviour controller which manages a connection to the Twitch IRC server.
     /// </summary>
     public class TwitchController : MonoBehaviour
     {
@@ -65,10 +65,8 @@ namespace Incredulous.Twitch
         /// </summary>
         private bool _shouldConnect;
 
-        private bool _debugIrc;
-
         /// <summary>
-        /// Connect or reconnect to Twitch IRC.
+        /// Connect to Twitch IRC.
         /// </summary>
         [ContextMenu("Connect")]
         public void Connect()
@@ -95,18 +93,19 @@ namespace Incredulous.Twitch
         }
 
         /// <summary>
-        /// Sends a chat message.
+        /// Formats a message as a chat message and sends it to the IRC server.
         /// </summary>
-        /// <param name="message"></param>
+        /// <param name="message">The message to send.</param>
         public void SendChatMessage(string message) => Client?.SendChatMessage(message);
 
         /// <summary>
-        /// Queues a command to be sent to the IRC server. Prioritzed commands will be sent without regard for rate limits.
+        /// Queues a pre-formatted command to be sent to the IRC server.
         /// </summary>
+        /// <param name="command">The pre-formatted command to send,</param>
         public void SendCommand(string command) => Client?.SendCommand(command);
 
         /// <summary>
-        /// Sends a PING message to the Twitch IRC server.
+        /// Sends a PING command to the Twitch IRC server.
         /// </summary>
         [ContextMenu("Ping")]
         public void Ping() => Client?.Ping();
@@ -120,7 +119,7 @@ namespace Incredulous.Twitch
             Client?.End();
             Credentials = credentials;
             SetupClient();
-            Client.Begin();
+            if (_shouldConnect) Client.Begin();
         }
 
         private void Start()

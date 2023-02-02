@@ -3,6 +3,9 @@ using UnityEngine;
 
 namespace Incredulous.Twitch
 {
+    /// <summary>
+    /// A bot command message.
+    /// </summary>
     [Serializable]
     public class BotCommandMessage : ChatMessageBase
     {
@@ -19,7 +22,10 @@ namespace Incredulous.Twitch
             CommandParams = botCommand.BotCommandParams;
         }
 
+        [field: Tooltip("The name of the command.")]
         [field: SerializeField] public string CommandName { get; private set; }
+
+        [field: Tooltip("The optional string of parameters following the command.")]
         [field: SerializeField] public string CommandParams { get; private set; }
     }
 }
