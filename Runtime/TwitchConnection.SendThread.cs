@@ -1,58 +1,49 @@
 ﻿using System;
 using System.IO;
-using System.Collections.Concurrent;
+using System.Text;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
 
 namespace Incredulous.Twitch
 {
-
     public partial class TwitchConnection
     {
-        private ConcurrentQueue<string> priorityOutputQueue = new ConcurrentQueue<string>();
-        private ConcurrentQueue<string> outputQueue = new ConcurrentQueue<string>();
+        private Queue<string> _outputQueue = new Queue<string>();
+        private Queue<DateTime> _outputTimestamps = new Queue<DateTime>();
 
         /// <summary>
         /// The IRC output process which will run on the send thread.
         /// </summary>
         private async Task SendProcess(CancellationToken cancellationToken)
         {
+            await Task.Yield();
             var stream = _tcpClient.GetStream();
-            RateLimit rateLimit;
 
             try
             {
-                while (!cancellationToken.IsCancellationRequested)
+                while (!cancellationToken.IsCancellationRequested && _outputQueue.Count > 0)
                 {
-                    // Send prioritized outputs
-                    while (priorityOutputQueue.TryDequeue(out var priorityOutput))
-                    {
-                        if (LogIrcMessages) ConnectionAlertEvent?.Invoke(new ConnectionAlert(0, "<color=#c91b00><b>[IRC OUTPUT]</b></color> Sending command: " + priorityOutput));
-                        stream.WriteLine(priorityOutput);
-                    }
-
-                    // If there are no queued messages, wait before checking again
-                    if (outputQueue.Count == 0)
-                    {
-                        await Task.Delay(100);
-                        continue;
-                    }
-
-                    // Update the rate limit
-                    lock (_rateLimitLock) rateLimit = _chatRateLimit;
-
                     // Clear timestamps that are older than the rate limit period
-                    var minTime = DateTime.Now - rateLimit.timeSpan;
+                    var minTime = DateTime.Now - RateLimit.TimeSpan;
                     while (_outputTimestamps.TryPeek(out var next) && next < minTime) _outputTimestamps.TryDequeue(out _);
-
-                    // Send outputs up to the rate limit
-                    while (_outputTimestamps.Count < rateLimit.count && outputQueue.TryDequeue(out var output))
+                    
+                    // Send prioritized outputs
+                    while (_outputTimestamps.Count < RateLimit.Count && _outputQueue.Count > 0)
                     {
-                        if (LogIrcMessages) ConnectionAlertEvent?.Invoke(new ConnectionAlert(0, "<color=#c91b00><b>[IRC OUTPUT]</b></color> Sending command: " + output));
-                        //if (debugIRC) Debug.Log("<color=#c91b00><b>[IRC OUTPUT]</b></color> Sending command: " + output);
-                        stream.WriteLine(output);
+                        // Get the next message
+                        var message = _outputQueue.Dequeue();
+                        var bytes = Encoding.UTF8.GetBytes(message);
+
+                        // Send the message
+                        await stream.WriteAsync(bytes, cancellationToken);
+
+                        // Record the time that this message was sent
                         _outputTimestamps.Enqueue(DateTime.Now);
+                        
+                        // Log the output
+                        if (LogIrcMessages) Debug.Log("<color=#c91b00><b>[IRC OUTPUT]</b></color> Sending: " + message);
                     }
                 }
             }
@@ -60,52 +51,47 @@ namespace Incredulous.Twitch
             {
                 Debug.LogError("Error while writing to NetworkStream.");
                 Debug.LogException(ex);
+                RetryConnection();
             }
-        }
-
-        /// <summary>
-        /// Sends a ping to the server.
-        /// </summary>
-        public void Ping() => SendCommand("PING :tmi.twitch.tv");
-
-        /// <summary>
-        /// Queues a command to be sent to the IRC server. Prioritzed commands will be sent without regard for rate limits.
-        /// </summary>
-        public void SendCommand(string command, bool prioritized = false)
-        {
-            // For non-prioritized outputs, send a warning if the output will surpass the rate limit
-            if (!prioritized)
+            catch (Exception ex)
             {
-                lock (_rateLimitLock)
-                {
-                    if (_outputTimestamps.Count + 1 > _chatRateLimit.count)
-                        ConnectionAlertEvent?.Invoke(ConnectionAlert.RateLimitWarning);
-                }
+                Debug.LogException(ex);
+                RetryConnection();
             }
-
-            // Place command in respective queue
-            var queue = prioritized ? priorityOutputQueue : outputQueue;
-            queue.Enqueue(command);
         }
 
         /// <summary>
-        /// Sends a chat message.
+        /// Queues a PING command to be sent to the IRC server.
+        /// </summary>
+        public void Ping() => Send("PING :tmi.twitch.tv");
+
+        /// <summary>
+        /// Queues a command to be sent to the IRC server.
+        /// </summary>
+        public void SendCommand(string command) => Send(command);
+
+        /// <summary>
+        /// Queues a chat message to be sent to the IRC server.
         /// </summary>
         public void SendChatMessage(string message)
         {
-            // Message can't be empty
-            if (message.Length <= 0) return;
+            // Ensure message is not empty
+            if (string.IsNullOrEmpty(message)) return;
 
-            // Send a warning if the output will surpass the rate limit
-            lock (_rateLimitLock)
-            {
-                if (_outputTimestamps.Count >= _chatRateLimit.count)
-                    ConnectionAlertEvent?.Invoke(ConnectionAlert.RateLimitWarning);
-            }
+            // Send the message
+            Send($"PRIVMSG #{Credentials.Channel.ToLower()} :{message}");
+        }
+
+        private void Send(string value)
+        {
+            // Warn if the output will surpass the rate limit
+            if (_outputTimestamps.Count + 1 > RateLimit.Count) ConnectionAlertEvent?.Invoke(ConnectionAlert.RateLimitWarning);
 
             // Place message in queue
-            outputQueue.Enqueue("PRIVMSG #" + Channel.ToLower() + " :" + message);
+            _outputQueue.Enqueue(value);
+
+            // Start the send process if it is not running
+            if (_sendProcess == null || _sendProcess.IsCompleted) _sendProcess = SendProcess(_childProcessCancellationSource.Token);
         }
     }
-
 }

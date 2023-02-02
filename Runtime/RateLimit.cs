@@ -4,12 +4,12 @@ public struct RateLimit
 {
     public RateLimit(int count, TimeSpan timeSpan)
     {
-        this.count = count;
-        this.timeSpan = timeSpan;
+        Count = count;
+        TimeSpan = timeSpan;
     }
 
-    public int count;
-    public TimeSpan timeSpan;
+    public int Count;
+    public TimeSpan TimeSpan;
 
     /// <summary>
     /// The chat command/message rate limit for users in a channel who do not have moderator permissions.

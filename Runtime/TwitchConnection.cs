@@ -1,29 +1,28 @@
-﻿using System;
-using System.Collections;
+﻿using System.Collections;
 using System.Collections.Concurrent;
 using System.Net.Sockets;
+using System.Net.WebSockets;
 using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
 
 namespace Incredulous.Twitch
 {
-
     public partial class TwitchConnection
     {
-        public TwitchConnection(string ircAddress, int port, TwitchCredentials twitchCredentials)
+        public TwitchConnection(string ircAddress, int port, TwitchCredentials credentials)
         {
             _ircAddress = ircAddress;
             _ircPort = port;
 
-            Username = twitchCredentials.username;
-            Token = twitchCredentials.oauth;
-            Channel = twitchCredentials.channel;
+            Credentials = new TwitchCredentials
+            {
+                Username = credentials.Username.ToLower(),
+                Channel = credentials.Channel.ToLower(),
+                Token = credentials.Token.StartsWith("oauth:") ? credentials.Token.Substring(6) : credentials.Token
+            };
 
-            //clientUserTags = twitchIRC.clientUserTags;
-
-            _chatRateLimit = twitchCredentials.username == twitchCredentials.channel ? RateLimit.ChatModerator : RateLimit.ChatRegular;
-            _outputTimestamps = new ConcurrentQueue<DateTime>();
+            RateLimit = Credentials.Username == Credentials.Channel ? RateLimit.ChatModerator : RateLimit.ChatRegular;
 
             LogIrcMessages = true;
         }
@@ -32,53 +31,24 @@ namespace Incredulous.Twitch
         private string _ircAddress;
         private int _ircPort;
 
-        private IRCTags _clientUserTags;
-        private int _isConnected;
+        private Task _connectionProcess;
+        private Task _receiveProcess;
+        private Task _sendProcess;
+        private TaskCompletionSource<bool> _parentProcessContinuationTcs;
+        private CancellationTokenSource _childProcessCancellationSource;
 
-        public string Username { get; }
-        public string Token { get; }
-        public string Channel { get; }
+        public TwitchCredentials Credentials { get; }
 
-        //private readonly ConcurrentQueue<ConnectionAlert> _alertQueue = new ConcurrentQueue<ConnectionAlert>();
-        //private readonly ConcurrentQueue<Chatter> _chatterQueue = new ConcurrentQueue<Chatter>();
-        private readonly ConcurrentQueue<DateTime> _outputTimestamps = new ConcurrentQueue<DateTime>();
+        public RateLimit RateLimit { get; private set; }
 
-        private bool _maintainConnection;
-        private Task _connectionTask;
-        private CancellationTokenSource _cancellationTokenSource;
+        public Status ConnectionStatus { get; private set; }
 
-        private object _rateLimitLock = new object();
-        private RateLimit _chatRateLimit;
-
-        public bool LogIrcMessages;
+        public bool LogIrcMessages { get; set; }
 
         /// <summary>
         /// The client user's Twitch tags.
         /// </summary>
-        public IRCTags ClientUserTags
-        {
-            get => _clientUserTags;
-            private set => Interlocked.Exchange(ref _clientUserTags, value);
-        }
-
-        /// <summary>
-        /// Whether this instance is currently connected to Twitch.
-        /// </summary>
-        public bool isConnected
-        {
-            get => _isConnected == 1;
-            private set => Interlocked.Exchange(ref _isConnected, value ? 1 : 0);
-        }
-
-        /// <summary>
-        /// A delegate which handles a new chat message from the server.
-        /// </summary>
-        public delegate void ChatMessageEventHandler(Chatter chatter);
-
-        /// <summary>
-        /// A delegate which handles a status update from the Twitch IRC client.
-        /// </summary>
-        public delegate void ConnectionAlertEventHandler(ConnectionAlert connectionAlert);
+        public IRCTags ClientUserTags { get; private set; }
 
         /// <summary>
         /// An event which is triggered when a new chat message is received.
@@ -95,35 +65,29 @@ namespace Incredulous.Twitch
         /// </summary>
         public void Begin()
         {
-            if (_maintainConnection) return;
-            _maintainConnection = true;
-            _connectionTask = MaintainConnection();
+            if (ConnectionStatus != Status.Disconnected) return;
+            _connectionProcess = ConnectionProcess();
         }
 
         /// <summary>
-        /// A coroutine which closes the connection and threads without blocking the main thread.
+        /// Close the connection.
         /// </summary>
-        public async Task End()
+        public void End()
         {
-            if (!_maintainConnection) return;
-            _maintainConnection = false;
-            _cancellationTokenSource.Cancel();
-            await _connectionTask;
-
-            isConnected = false;
+            if (ConnectionStatus == Status.Disconnected || ConnectionStatus == Status.Disconnecting) return;
+            TerminateConnection();
         }
 
         /// <summary>
-        /// A coroutine which closes the connection and threads without blocking the main thread.
+        /// Close the connection asynchronously.
         /// </summary>
-        public void BlockingEndAndClose()
+        public async Task EndAsync()
         {
-            if (!_maintainConnection) return;
-            _maintainConnection = false;
-            _cancellationTokenSource.Cancel();
-            _connectionTask.Wait();
+            if (ConnectionStatus == Status.Disconnected || ConnectionStatus == Status.Disconnecting) return;
+            await Task.Yield();
 
-            isConnected = false;
+            TerminateConnection();
+            await _connectionProcess;
         }
 
         /// <summary>
@@ -131,62 +95,99 @@ namespace Incredulous.Twitch
         /// </summary>
         private void UpdateRateLimits(IRCTags tags)
         {
-            if (tags.HasBadge("broadcaster") || tags.HasBadge("moderator"))
-            {
-                lock (_rateLimitLock) _chatRateLimit = RateLimit.ChatModerator;
-            }
-            else
-            {
-                lock (_rateLimitLock) _chatRateLimit = RateLimit.ChatRegular;
-            }
+            RateLimit = (tags.HasBadge("broadcaster") || tags.HasBadge("moderator")) ? RateLimit.ChatModerator : RateLimit.ChatRegular;
         }
 
-        private async Task MaintainConnection()
+        private async Task ConnectionProcess()
         {
-            while (_maintainConnection)
+            var maintainConnection = true;
+            ConnectionStatus = Status.Connecting;
+
+            while (maintainConnection)
             {
+                // Create a new continuation task
+                _parentProcessContinuationTcs = new TaskCompletionSource<bool>();
+
                 // Initialize the connection
-                _tcpClient = new TcpClient();
+                _tcpClient = new TcpClient
+                {
+                    ReceiveTimeout = 1000,
+                    SendTimeout = 5000
+                };
                 Debug.Log("Connecting...");
                 await _tcpClient.ConnectAsync(_ircAddress, _ircPort);
 
-                // Begin send and receive processes
-                Debug.Log("Starting send/receive routines...");
-                _cancellationTokenSource = new CancellationTokenSource();
-                var receiveTask = ReceiveProcess(_cancellationTokenSource.Token);
-                var sendTask = SendProcess(_cancellationTokenSource.Token);
+                // Begin receive processes
+                Debug.Log("Starting receive process...");
+                _childProcessCancellationSource = new CancellationTokenSource();
+                _receiveProcess = ReceiveProcess(_childProcessCancellationSource.Token);
 
                 // Queue login commands
                 Debug.Log("Sending initial commands...");
-                SendCommand("PASS oauth:" + Token.ToLower(), true);
-                SendCommand("NICK " + Username.ToLower(), true);
-                SendCommand("CAP REQ :twitch.tv/tags twitch.tv/commands", true);
+                Send("CAP REQ :twitch.tv/tags twitch.tv/commands");
+                Send("PASS oauth:" + Credentials.Token);
+                Send("NICK " + Credentials.Username);
 
-                // Wait for any of the tasks to complete
-                var task = await Task.WhenAny(receiveTask, sendTask);
-                if (task.IsFaulted) Debug.LogException(task.Exception);
-                _cancellationTokenSource.Cancel();
+                // NOTE: Updating the connection status to "Connected" is handled in the method HandleRPL
 
-                // Await each process separately
+                // Wait while the connection is live
+                maintainConnection = await _parentProcessContinuationTcs.Task;
+
+                // Update the connection status
+                ConnectionStatus = maintainConnection ? Status.Connecting : Status.Disconnecting;
+
+                // Terminate the send/receive processes
+                _childProcessCancellationSource.Cancel();
+
+                // Await each process, discard errors
                 try
                 {
-                    await receiveTask;
+                    await _receiveProcess;
                 }
-                catch (Exception ex)
-                {
-                    Debug.LogException(ex);
-                }
+                catch { }
 
                 try
                 {
-                    await sendTask;
+                    await _sendProcess;
                 }
-                catch (Exception ex)
-                {
-                    Debug.LogException(ex);
-                }
+                catch { }
+
+                _tcpClient.Close();
             }
+
+            ConnectionStatus = Status.Disconnected;
+            Debug.Log("Disconnected");
+        }
+
+        private void RetryConnection()
+        {
+            _parentProcessContinuationTcs.TrySetResult(true);
+        }
+
+        private void TerminateConnection()
+        {
+            _parentProcessContinuationTcs.TrySetResult(false);
+        }
+
+        /// <summary>
+        /// A delegate which handles a new chat message from the server.
+        /// </summary>
+        public delegate void ChatMessageEventHandler(Chatter chatter);
+
+        /// <summary>
+        /// A delegate which handles a status update from the Twitch IRC client.
+        /// </summary>
+        public delegate void ConnectionAlertEventHandler(ConnectionAlert connectionAlert);
+
+        /// <summary>
+        /// A enumeration of connection states for the Twtch IRC client.
+        /// </summary>
+        public enum Status
+        {
+            Disconnected,
+            Connecting,
+            Connected,
+            Disconnecting
         }
     }
-
 }

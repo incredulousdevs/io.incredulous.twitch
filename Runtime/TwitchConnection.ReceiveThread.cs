@@ -8,73 +8,57 @@ using UnityEngine;
 
 namespace Incredulous.Twitch
 {
-
     public partial class TwitchConnection
     {
-        const int READ_BUFFER_SIZE = 256;
-        const int READ_INTERVAL = 100;
-
         /// <summary>
         /// The IRC input process which will run on the receive thread.
         /// </summary>
         private async Task ReceiveProcess(CancellationToken cancellationToken)
         {
             var stream = _tcpClient.GetStream();
-            var currentString = new StringBuilder();
-            var inputBuffer = new byte[READ_BUFFER_SIZE];
-            var chars = new char[READ_BUFFER_SIZE];
-            var decoder = Encoding.UTF8.GetDecoder();
+            var buffer = new byte[_tcpClient.ReceiveBufferSize];
+            var builder = new StringBuilder();
 
             try
             {
                 while (!cancellationToken.IsCancellationRequested)
                 {
-                    /*
-                    // check if the socket is still connected
-                    if (!CheckSocketConnection(tcpClient.Client))
-                    {
-                        // Sometimes, right after a new TcpClient is created, the socket says
-                        // it has been shutdown. This catches that case and reconnects.
-                        isConnected = false;
-                        alertQueue.Enqueue(ConnectionAlert.ConnectionInterrupted);
-                        break;
-                    }
-                    */
+                    //await Task.Yield();
+                    //if (!stream.DataAvailable) continue;
 
-                    if (!stream.DataAvailable)
-                    {
-                        await Task.Delay(READ_INTERVAL);
-                        continue;
-                    }
-
-                    // Receive and decode the data
                     Debug.Log("Beginning read...");
-                    var bytesReceived = await stream.ReadAsync(inputBuffer, 0, READ_BUFFER_SIZE, cancellationToken);
-                    var charCount = decoder.GetChars(inputBuffer, 0, bytesReceived, chars, 0);
-                    Debug.Log("Read data!");
+                    var count = await stream.ReadAsync(buffer, cancellationToken);
+                    var received = Encoding.UTF8.GetString(buffer, 0, count);
+                    Debug.Log($"Received: {received}");
 
-                    // iterate through the received characters
-                    for (var i = 0; i < charCount; i++)
+                    for (var i = 0; i < count; i++)
                     {
-                        if (chars[i] == '\n' || chars[i] == '\r')
+                        if (received[i] == '\n' || received[i] == '\r')
                         {
-                            // if the character is a linebreak, handle the line
-                            if (currentString.Length > 0) HandleLine(currentString.ToString());
-                            currentString.Clear();
+                            var line = builder.ToString();
+                            builder.Clear();
+
+                            if (!string.IsNullOrEmpty(line)) HandleLine(line);
+
+                            continue;
                         }
-                        else
-                        {
-                            // append non-linebreak characters to the current string
-                            currentString.Append(chars[i]);
-                        }
+
+                        builder.Append(received[i]);
                     }
+
+                    await Task.Yield();
                 }
             }
-            catch (OperationCanceledException) { }
             catch (IOException ex)
             {
                 Debug.LogError("Error while reading NetworkStream.");
                 Debug.LogException(ex);
+                RetryConnection();
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex);
+                RetryConnection();
             }
         }
 
@@ -88,7 +72,7 @@ namespace Incredulous.Twitch
             // Respond to PING messages
             if (raw.StartsWith("PING"))
             {
-                SendCommand("PONG :tmi.twitch.tv");
+                Send("PONG :tmi.twitch.tv");
                 return;
             }
 
@@ -141,8 +125,8 @@ namespace Incredulous.Twitch
         {
             if (ircString.Contains(":Login authentication failed"))
             {
-                isConnected = false;
                 ConnectionAlertEvent?.Invoke(ConnectionAlert.BadLogin);
+                TerminateConnection();
             }
         }
 
@@ -155,10 +139,10 @@ namespace Incredulous.Twitch
             {
                 case "001":
                     ConnectionAlertEvent?.Invoke(ConnectionAlert.ConnectedToServer);
-                    SendCommand("JOIN #" + Channel.ToLower(), true);
+                    Send("JOIN #" + Credentials.Channel.ToLower());
                     break;
                 case "353":
-                    isConnected = true;
+                    ConnectionStatus = Status.Connected;
                     ConnectionAlertEvent?.Invoke(ConnectionAlert.JoinedChannel);
                     break;
             }
@@ -207,5 +191,4 @@ namespace Incredulous.Twitch
             }
         }
     }
-
 }

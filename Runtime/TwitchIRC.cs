@@ -62,7 +62,7 @@ namespace Incredulous.Twitch
         /// <summary>
         /// Whether the Twitch client is successfully connected to Twitch.
         /// </summary>
-        public bool IsConnected => connection?.isConnected ?? false;
+        public bool IsConnected => connection.ConnectionStatus == TwitchConnection.Status.Connected;
 
         /// <summary>
         /// The first created instance of TwitchIRC, if it exists.
@@ -130,13 +130,13 @@ namespace Incredulous.Twitch
 
         private void OnDisable()
         {
-            _ = connection?.End();
+            connection?.End();
         }
 
         private void OnDestroy()
         {
             if (singleton && Instance == this) Instance = null;
-            _ = connection?.End();
+            connection?.End();
         }
 
         #endregion
@@ -192,7 +192,7 @@ namespace Incredulous.Twitch
         /// <summary>
         /// Queues a command to be sent to the IRC server. Prioritzed commands will be sent without regard for rate limits.
         /// </summary>
-        public void SendCommand(string command, bool prioritized = false) => connection?.SendCommand(command, prioritized);
+        public void SendCommand(string command) => connection?.SendCommand(command);
 
         /// <summary>
         /// Sends a PING message to the Twitch IRC server.
@@ -207,15 +207,15 @@ namespace Incredulous.Twitch
                 Disconnect();
 
             // Verify that login information has been provided
-            if (twitchCredentials.oauth.Length <= 0 || twitchCredentials.username.Length <= 0 || twitchCredentials.channel.Length <= 0)
+            if (twitchCredentials.Token.Length <= 0 || twitchCredentials.Username.Length <= 0 || twitchCredentials.Channel.Length <= 0)
             {
                 alertQueue.Enqueue(ConnectionAlert.MissingLogin);
                 yield break;
             }
 
             // Fix formatting (twitchapps.com)
-            if (twitchCredentials.oauth.StartsWith("oauth:"))
-                twitchCredentials.oauth = twitchCredentials.oauth.Substring(6);
+            if (twitchCredentials.Token.StartsWith("oauth:"))
+                twitchCredentials.Token = twitchCredentials.Token.Substring(6);
 
             // Create a new connection to Twitch IRC
             connection = new TwitchConnection(ircAddress, port, twitchCredentials);
@@ -248,7 +248,7 @@ namespace Incredulous.Twitch
             HandlePendingInformation();
 
             // Close the connection
-            var endTask = connection.End();
+            var endTask = connection.EndAsync();
             while (!endTask.IsCompleted) yield return null;
 
             // Reset connection variable
